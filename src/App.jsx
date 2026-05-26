@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 
 // ==========================================
-// 🚀 您的專屬 Firebase 金鑰
+// 🚀 Firebase 金鑰配置
 // ==========================================
 const firebaseConfig = {
   apiKey: "AIzaSyC-NBub5GWvKxUuEfWPpzdeI-M0VPFkHCw",
@@ -43,22 +43,18 @@ const firebaseConfig = {
   measurementId: "G-TD83NHWXW7",
 };
 
-// --- 初始化 Firebase (移除 Auth，直接連線資料庫) ---
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-// 簡化為您專屬的資料表名稱
 const DB_COLLECTION_NAME = "wishvision_stats";
 
-// 預設分院與對應的主題色 (對比模式使用)
 const BRANCHES = ["台北館前院", "台北仁愛院", "台中東興院", "新竹光明院"];
 const BRANCH_COLORS = {
-  台北館前院: "#3b82f6", // Blue
-  台北仁愛院: "#ec4899", // Pink
-  台中東興院: "#10b981", // Emerald
-  新竹光明院: "#f59e0b", // Amber
+  台北館前院: "#3b82f6",
+  台北仁愛院: "#ec4899",
+  台中東興院: "#10b981",
+  新竹光明院: "#f59e0b",
 };
 
-// 指標選項
 const METRICS = [
   { id: "currentC", label: "本月諮詢", color: "#3b82f6" },
   { id: "nextC", label: "下月諮詢", color: "#8b5cf6" },
@@ -71,7 +67,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // --- 表單狀態 ---
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [branch, setBranch] = useState(BRANCHES[0]);
   const [currentC, setCurrentC] = useState("");
@@ -80,7 +75,6 @@ export default function App() {
   const [nextS, setNextS] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // --- 篩選狀態 (儀表板) ---
   const [selectedObsMonth, setSelectedObsMonth] = useState(
     new Date().toISOString().slice(0, 7)
   );
@@ -93,7 +87,6 @@ export default function App() {
   ]);
   const [viewMode, setViewMode] = useState("aggregate");
 
-  // 自動計算標籤
   const dateObj = new Date(date);
   const currMonthLabel = `${dateObj.getMonth() + 1}月`;
   const nextMonthDate = new Date(
@@ -103,10 +96,8 @@ export default function App() {
   );
   const nextMonthLabel = `${nextMonthDate.getMonth() + 1}月`;
 
-  // 1. Firebase 直接讀取資料
   useEffect(() => {
     const collectionRef = collection(db, DB_COLLECTION_NAME);
-
     const unsubscribeData = onSnapshot(
       collectionRef,
       (snapshot) => {
@@ -123,11 +114,9 @@ export default function App() {
         setLoading(false);
       }
     );
-
     return () => unsubscribeData();
   }, []);
 
-  // 2. 處理表單送出
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (
@@ -143,10 +132,8 @@ export default function App() {
     }
     setIsSubmitting(true);
     try {
-      // 確保同一天同分院只會有一筆紀錄
       const docId = `${date}_${branch}`;
       const docRef = doc(db, DB_COLLECTION_NAME, docId);
-
       await setDoc(docRef, {
         date,
         branch,
@@ -158,8 +145,6 @@ export default function App() {
         nextS: Number(nextS),
         timestamp: new Date().getTime(),
       });
-
-      // 清空表單數值
       setCurrentC("");
       setCurrentS("");
       setNextC("");
@@ -180,7 +165,6 @@ export default function App() {
     }
   };
 
-  // UI 切換處理
   const toggleBranch = (b) => {
     if (selectedBranches.includes(b)) {
       if (selectedBranches.length > 1)
@@ -199,7 +183,6 @@ export default function App() {
     }
   };
 
-  // 4. 資料處理與統計預估
   const processedData = useMemo(() => {
     const monthRecords = records.filter((r) =>
       r.date.startsWith(selectedObsMonth)
@@ -207,7 +190,6 @@ export default function App() {
     const sortedRecords = [...monthRecords].sort(
       (a, b) => new Date(a.date) - new Date(b.date)
     );
-
     const uniqueDates = [...new Set(sortedRecords.map((r) => r.date))].sort();
     const chartDataAggregate = [];
     const chartDataCompare = [];
@@ -218,7 +200,6 @@ export default function App() {
       recordsForDate.forEach((r) => {
         branchLatest[r.branch] = r;
       });
-
       let aggRow = {
         date: dateStr,
         currentC: 0,
@@ -227,7 +208,6 @@ export default function App() {
         nextS: 0,
       };
       let compRow = { date: dateStr };
-
       selectedBranches.forEach((b) => {
         const bData = branchLatest[b];
         if (bData) {
@@ -235,7 +215,6 @@ export default function App() {
           aggRow.currentS += bData.currentS || 0;
           aggRow.nextC += bData.nextC || 0;
           aggRow.nextS += bData.nextS || 0;
-
           compRow[`${b}_currentC`] = bData.currentC || 0;
           compRow[`${b}_currentS`] = bData.currentS || 0;
           compRow[`${b}_nextC`] = bData.nextC || 0;
@@ -275,18 +254,15 @@ export default function App() {
         (new Date(lastData.date) - new Date(firstData.date)) /
           (1000 * 60 * 60 * 24)
       );
-
       if (elapsedDays > 0) {
         const pCC = (lastData.currentC - firstData.currentC) / elapsedDays;
         const pCS = (lastData.currentS - firstData.currentS) / elapsedDays;
         const pNC = (lastData.nextC - firstData.nextC) / elapsedDays;
         const pNS = (lastData.nextS - firstData.nextS) / elapsedDays;
-
         stats.paceCC = pCC > 0 ? `+${pCC.toFixed(1)}` : pCC.toFixed(1);
         stats.paceCS = pCS > 0 ? `+${pCS.toFixed(1)}` : pCS.toFixed(1);
         stats.paceNC = pNC > 0 ? `+${pNC.toFixed(1)}` : pNC.toFixed(1);
         stats.paceNS = pNS > 0 ? `+${pNS.toFixed(1)}` : pNS.toFixed(1);
-
         const daysRemaining = Math.max(
           0,
           Math.round(
@@ -311,11 +287,9 @@ export default function App() {
         );
       }
     }
-
     const filteredRecordsForTable = [...monthRecords]
       .filter((r) => selectedBranches.includes(r.branch))
       .sort((a, b) => new Date(b.date) - new Date(a.date));
-
     return {
       filteredRecords: filteredRecordsForTable,
       chartDataAggregate,
@@ -464,7 +438,6 @@ export default function App() {
         </header>
 
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-          {/* 左側：觀測表單 */}
           <div className="xl:col-span-3 bg-white p-5 rounded-2xl shadow-sm border border-slate-100 h-fit">
             <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
               <PlusCircle className="w-5 h-5 text-blue-500" /> 新增紀錄
@@ -504,8 +477,6 @@ export default function App() {
                   </select>
                 </div>
               </div>
-
-              {/* 本月區塊 */}
               <div className="bg-blue-50/50 border border-blue-100 p-3 rounded-xl space-y-2">
                 <h3 className="font-bold text-blue-800 flex justify-between items-center text-xs border-b border-blue-200/50 pb-1.5">
                   <span>當月累積指標</span>
@@ -542,8 +513,6 @@ export default function App() {
                   </div>
                 </div>
               </div>
-
-              {/* 下月區塊 */}
               <div className="bg-indigo-50/50 border border-indigo-100 p-3 rounded-xl space-y-2">
                 <h3 className="font-bold text-indigo-800 flex justify-between items-center text-xs border-b border-indigo-200/50 pb-1.5">
                   <span>下月預約儲備</span>
@@ -580,7 +549,6 @@ export default function App() {
                   </div>
                 </div>
               </div>
-
               <button
                 type="submit"
                 disabled={isSubmitting}
@@ -590,10 +558,7 @@ export default function App() {
               </button>
             </form>
           </div>
-
-          {/* 右側：數據儀表板 */}
           <div className="xl:col-span-9 space-y-4">
-            {/* 強大儀表板控制列 */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col gap-4">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
@@ -609,7 +574,6 @@ export default function App() {
                     最後更新：{processedData.stats.latestDate || "無"}
                   </div>
                 </div>
-
                 <div className="flex bg-slate-100 p-1 rounded-lg">
                   <button
                     onClick={() => setViewMode("aggregate")}
@@ -633,13 +597,11 @@ export default function App() {
                   </button>
                 </div>
               </div>
-
               <hr className="border-slate-100" />
-
               <div className="flex flex-col md:flex-row gap-6">
                 <div className="flex-1">
                   <label className="text-xs font-bold text-slate-500 mb-2 flex items-center gap-1">
-                    <Filter className="w-3 h-3" /> 分院篩選 (可複選)
+                    <Filter className="w-3 h-3" /> 分院篩選
                   </label>
                   <div className="flex flex-wrap gap-2">
                     {BRANCHES.map((b) => {
@@ -660,10 +622,9 @@ export default function App() {
                     })}
                   </div>
                 </div>
-
                 <div className="flex-1">
                   <label className="text-xs font-bold text-slate-500 mb-2 flex items-center gap-1">
-                    <TrendingUp className="w-3 h-3" /> 圖表指標 (可複選)
+                    <TrendingUp className="w-3 h-3" /> 圖表指標
                   </label>
                   <div className="flex flex-wrap gap-2">
                     {METRICS.map((m) => {
@@ -688,14 +649,11 @@ export default function App() {
                 </div>
               </div>
             </div>
-
-            {/* 核心雙指標卡片 */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* 諮詢卡片 */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                 <div className="bg-blue-600 px-4 py-2 flex justify-between items-center">
                   <h3 className="text-white text-sm font-bold">
-                    諮詢量動能 (所選分院加總)
+                    諮詢量動能 (加總)
                   </h3>
                 </div>
                 <div className="p-4 grid grid-cols-2 gap-4 divide-x divide-slate-100">
@@ -704,55 +662,19 @@ export default function App() {
                     <div className="text-2xl font-bold text-slate-800 mb-2">
                       {processedData.stats.currentC}
                     </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-400">平均日增</span>
-                        <span className="font-medium text-slate-700">
-                          {processedData.stats.paceCC}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-[11px] bg-blue-50 p-1 rounded">
-                        <span className="text-blue-700">月底落點</span>
-                        <span className="font-bold text-blue-700">
-                          {processedData.stats.hasEnoughData
-                            ? processedData.stats.estCC
-                            : "---"}
-                        </span>
-                      </div>
-                    </div>
                   </div>
                   <div className="pl-4">
-                    <div className="text-xs text-slate-500 mb-1">
-                      下月預約儲備
-                    </div>
+                    <div className="text-xs text-slate-500 mb-1">下月預約</div>
                     <div className="text-2xl font-bold text-slate-800 mb-2">
                       {processedData.stats.nextC}
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-400">平均日增</span>
-                        <span className="font-medium text-slate-700">
-                          {processedData.stats.paceNC}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-[11px] bg-indigo-50 p-1 rounded">
-                        <span className="text-indigo-700">月底前掌握</span>
-                        <span className="font-bold text-indigo-700">
-                          {processedData.stats.hasEnoughData
-                            ? processedData.stats.estNC
-                            : "---"}
-                        </span>
-                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-
-              {/* 手術卡片 */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                 <div className="bg-emerald-600 px-4 py-2 flex justify-between items-center">
                   <h3 className="text-white text-sm font-bold">
-                    手術量動能 (所選分院加總)
+                    手術量動能 (加總)
                   </h3>
                 </div>
                 <div className="p-4 grid grid-cols-2 gap-4 divide-x divide-slate-100">
@@ -761,62 +683,23 @@ export default function App() {
                     <div className="text-2xl font-bold text-slate-800 mb-2">
                       {processedData.stats.currentS}
                     </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-400">平均日增</span>
-                        <span className="font-medium text-slate-700">
-                          {processedData.stats.paceCS}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-[11px] bg-emerald-50 p-1 rounded">
-                        <span className="text-emerald-700">月底落點</span>
-                        <span className="font-bold text-emerald-700">
-                          {processedData.stats.hasEnoughData
-                            ? processedData.stats.estCS
-                            : "---"}
-                        </span>
-                      </div>
-                    </div>
                   </div>
                   <div className="pl-4">
-                    <div className="text-xs text-slate-500 mb-1">
-                      下月預約儲備
-                    </div>
+                    <div className="text-xs text-slate-500 mb-1">下月預約</div>
                     <div className="text-2xl font-bold text-slate-800 mb-2">
                       {processedData.stats.nextS}
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-400">平均日增</span>
-                        <span className="font-medium text-slate-700">
-                          {processedData.stats.paceNS}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-[11px] bg-teal-50 p-1 rounded">
-                        <span className="text-teal-700">月底前掌握</span>
-                        <span className="font-bold text-teal-700">
-                          {processedData.stats.hasEnoughData
-                            ? processedData.stats.estNS
-                            : "---"}
-                        </span>
-                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-
-            {/* 趨勢圖表 */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
               <div className="mb-4">
                 <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
                   <Activity className="w-4 h-4 text-slate-800" />
-                  {viewMode === "aggregate"
-                    ? "合併加總趨勢圖"
-                    : "跨分院對比趨勢圖"}
+                  趨勢圖表
                 </h3>
               </div>
-
               {processedData.chartDataAggregate.length > 0 ? (
                 <div className="h-80 w-full">
                   <ResponsiveContainer width="100%" height="100%">
@@ -853,7 +736,6 @@ export default function App() {
                           boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
                           fontSize: "12px",
                         }}
-                        labelFormatter={(label) => `觀測日: ${label}`}
                       />
                       <Legend
                         iconType="circle"
@@ -865,95 +747,9 @@ export default function App() {
                 </div>
               ) : (
                 <div className="h-80 flex items-center justify-center text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-sm">
-                  尚無符合篩選條件的數據
+                  尚無數據
                 </div>
               )}
-            </div>
-
-            {/* 資料明細清單 */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-              <div className="p-3 bg-slate-50/50 border-b border-slate-100">
-                <h3 className="font-semibold text-slate-700 text-sm">
-                  觀測歷史明細 (僅顯示勾選分院)
-                </h3>
-              </div>
-              <div className="overflow-x-auto max-h-60 overflow-y-auto">
-                <table className="w-full text-left border-collapse min-w-[700px]">
-                  <thead className="bg-white sticky top-0 shadow-sm z-10">
-                    <tr>
-                      <th className="py-2 px-4 text-[11px] font-medium text-slate-500 uppercase tracking-wider">
-                        觀察日
-                      </th>
-                      <th className="py-2 px-4 text-[11px] font-medium text-slate-500 uppercase tracking-wider">
-                        分院
-                      </th>
-                      <th className="py-2 px-4 text-[11px] font-medium text-blue-600 uppercase tracking-wider text-right bg-blue-50/30">
-                        本月諮詢
-                      </th>
-                      <th className="py-2 px-4 text-[11px] font-medium text-indigo-600 uppercase tracking-wider text-right bg-indigo-50/30">
-                        下月諮詢
-                      </th>
-                      <th className="py-2 px-4 text-[11px] font-medium text-emerald-600 uppercase tracking-wider text-right bg-emerald-50/30">
-                        本月手術
-                      </th>
-                      <th className="py-2 px-4 text-[11px] font-medium text-teal-600 uppercase tracking-wider text-right bg-teal-50/30">
-                        下月手術
-                      </th>
-                      <th className="py-2 px-4 text-[11px] font-medium text-slate-500 uppercase tracking-wider text-center">
-                        操作
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {processedData.filteredRecords.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan="7"
-                          className="py-6 text-center text-slate-400 text-xs"
-                        >
-                          無資料
-                        </td>
-                      </tr>
-                    ) : (
-                      processedData.filteredRecords.map((record) => (
-                        <tr
-                          key={record.id}
-                          className="hover:bg-slate-50 transition-colors"
-                        >
-                          <td className="py-2 px-4 text-xs text-slate-700 font-medium whitespace-nowrap">
-                            {record.date}
-                          </td>
-                          <td className="py-2 px-4 text-xs text-slate-600 whitespace-nowrap">
-                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                              {record.branch}
-                            </span>
-                          </td>
-                          <td className="py-2 px-4 text-xs text-slate-700 text-right bg-blue-50/10">
-                            {record.currentC}
-                          </td>
-                          <td className="py-2 px-4 text-xs text-slate-700 text-right bg-indigo-50/10">
-                            {record.nextC}
-                          </td>
-                          <td className="py-2 px-4 text-xs text-slate-700 text-right bg-emerald-50/10">
-                            {record.currentS}
-                          </td>
-                          <td className="py-2 px-4 text-xs text-slate-700 text-right bg-teal-50/10">
-                            {record.nextS}
-                          </td>
-                          <td className="py-2 px-4 text-center">
-                            <button
-                              onClick={() => handleDelete(record.id)}
-                              className="text-slate-400 hover:text-red-500 transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
             </div>
           </div>
         </div>
