@@ -449,12 +449,15 @@ export default function App() {
                   "儲存今日紀錄"
                 )}
               </button>
+
               {uiStatus.msg && (
                 <div
                   className={`text-xs p-3 rounded-xl border text-center font-medium ${
-                    uiStatus.type === "success"
-                      ? "bg-green-50 text-green-700"
-                      : "bg-red-50 text-red-700"
+                    uiStatus.type === "error"
+                      ? "border-red-200 text-red-600 bg-red-50"
+                      : uiStatus.type === "success"
+                      ? "border-green-200 text-green-600 bg-green-50"
+                      : "border-blue-200 text-blue-600 bg-blue-50"
                   }`}
                 >
                   {uiStatus.msg}
