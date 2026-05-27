@@ -25,8 +25,10 @@ import {
   PlusCircle,
   CheckCircle,
   RefreshCw,
+  Activity,
 } from "lucide-react";
 
+// 您專屬的 WishVision Firebase 配置
 const firebaseConfig = {
   apiKey: "AIzaSyC-NBub5GWvKxUuEfWPzdeI-M0VPFkHCw",
   authDomain: "wishvision-predict-system.firebaseapp.com",
@@ -41,6 +43,12 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 const BRANCHES = ["台北館前院", "台北仁愛院", "台中東興院", "新竹光明院"];
+const METRICS = [
+  { key: "currentC", label: "本月諮詢", color: "#2563eb" },
+  { key: "nextC", label: "下月諮詢", color: "#7c3aed" },
+  { key: "currentS", label: "本月手術", color: "#16a34a" },
+  { key: "nextS", label: "下月手術", color: "#06b6d4" },
+];
 
 export default function App() {
   const [formData, setFormData] = useState({
@@ -56,6 +64,12 @@ export default function App() {
     new Date().toISOString().slice(0, 7)
   );
   const [selectedBranches, setSelectedBranches] = useState(BRANCHES);
+  const [selectedMetrics, setSelectedMetrics] = useState([
+    "currentC",
+    "nextC",
+    "currentS",
+    "nextS",
+  ]);
   const [dbData, setDbData] = useState([]);
   const [uiStatus, setUiStatus] = useState({
     loading: false,
@@ -64,6 +78,7 @@ export default function App() {
   });
   const [viewMode, setViewMode] = useState("aggregate");
 
+  // 即時監聽 Firestore 資料
   useEffect(() => {
     const unsubscribe = onSnapshot(
       collection(db, "wishvision_stats"),
@@ -95,6 +110,16 @@ export default function App() {
     }
   };
 
+  const handleMetricToggle = (metricKey) => {
+    if (selectedMetrics.includes(metricKey)) {
+      if (selectedMetrics.length > 1) {
+        setSelectedMetrics(selectedMetrics.filter((m) => m !== metricKey));
+      }
+    } else {
+      setSelectedMetrics([...selectedMetrics, metricKey]);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setUiStatus({ loading: true, msg: "正在儲存紀錄...", type: "info" });
@@ -108,8 +133,8 @@ export default function App() {
     const docId = `${date}_${branch}`;
     try {
       await setDoc(doc(db, "wishvision_stats", docId), {
-        date,
-        branch,
+        date: date,
+        branch: branch,
         month: date.slice(0, 7),
         day: parseInt(date.split("-")[2], 10),
         currentC: parseInt(currentC, 10),
@@ -140,7 +165,7 @@ export default function App() {
   };
 
   const { chartData, summaryMetrics, latestUpdateStr } = useMemo(() => {
-    // 💡 相容性更新：確保舊資料（沒有 month 欄位）也能被正確讀取
+    // 相容舊資料
     const filtered = dbData.filter((d) => {
       const docMonth = d.month || (d.date ? d.date.slice(0, 7) : "");
       return docMonth === selectedMonth;
@@ -150,7 +175,6 @@ export default function App() {
 
     let maxDayPassed = 1;
     filtered.forEach((d) => {
-      // 💡 相容性更新：確保舊資料也能正確抓出日期來算天數
       const docDay = d.day || (d.date ? parseInt(d.date.split("-")[2], 10) : 1);
       if (docDay > maxDayPassed) maxDayPassed = docDay;
     });
@@ -223,7 +247,6 @@ export default function App() {
       const activeData = filtered
         .filter((d) => d.branch === b)
         .sort((a, b) => {
-          // 💡 相容性更新：確保舊資料排序不會出錯
           const dayA =
             a.day || (a.date ? parseInt(a.date.split("-")[2], 10) : 0);
           const dayB =
@@ -281,65 +304,40 @@ export default function App() {
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
+  // 動態渲染圖表曲線 (確保語法正確)
   const renderChartLines = () => {
     if (viewMode === "aggregate") {
-      return (
-        <>
-          <Line
-            type="monotone"
-            dataKey="currentC"
-            name="本月累積諮詢"
-            stroke="#2563eb"
-            strokeWidth={3}
-            dot={{ r: 4 }}
-          />
-          <Line
-            type="monotone"
-            dataKey="nextC"
-            name="下月預約諮詢"
-            stroke="#7c3aed"
-            strokeWidth={2}
-            strokeDasharray="5 5"
-          />
-          <Line
-            type="monotone"
-            dataKey="currentS"
-            name="本月累積手術"
-            stroke="#16a34a"
-            strokeWidth={3}
-            dot={{ r: 4 }}
-          />
-          <Line
-            type="monotone"
-            dataKey="nextS"
-            name="下月預約手術"
-            stroke="#06b6d4"
-            strokeWidth={2}
-            strokeDasharray="5 5"
-          />
-        </>
-      );
-    } else {
-      const colors = ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"];
-      return selectedBranches.map((b, idx) => (
-        <React.Fragment key={b}>
-          <Line
-            type="monotone"
-            dataKey={`${b}_currentC`}
-            name={`${b} 本月諮詢`}
-            stroke={colors[idx % colors.length]}
-            strokeWidth={2}
-          />
-          <Line
-            type="monotone"
-            dataKey={`${b}_currentS`}
-            name={`${b} 本月手術`}
-            stroke={colors[idx % colors.length]}
-            strokeWidth={2}
-            strokeDasharray="3 3"
-          />
-        </React.Fragment>
+      return METRICS.filter((m) => selectedMetrics.includes(m.key)).map((m) => (
+        <Line
+          key={m.key}
+          type="monotone"
+          dataKey={m.key}
+          name={m.label}
+          stroke={m.color}
+          strokeWidth={m.key.startsWith("current") ? 3 : 2}
+          strokeDasharray={m.key.startsWith("next") ? "5 5" : "0"}
+          dot={{ r: 4 }}
+        />
       ));
+    } else {
+      let lines = [];
+      const colors = ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"];
+      selectedBranches.forEach((b, idx) => {
+        METRICS.filter((m) => selectedMetrics.includes(m.key)).forEach((m) => {
+          lines.push(
+            <Line
+              key={`${b}_${m.key}`}
+              type="monotone"
+              dataKey={`${b}_${m.key}`}
+              name={`${b} ${m.label}`}
+              stroke={colors[idx % colors.length]}
+              strokeWidth={2}
+              strokeDasharray={m.key.startsWith("next") ? "3 3" : "0"}
+            />
+          );
+        });
+      });
+      return lines;
     }
   };
 
@@ -527,30 +525,62 @@ export default function App() {
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100">
-            <span className="text-xs font-bold text-slate-400 uppercase block mb-2 flex items-center gap-1">
-              <Building2 className="w-3.5 h-3.5" /> 分院篩選
-            </span>
-            <div className="flex flex-wrap gap-2">
-              {BRANCHES.map((b) => {
-                const active = selectedBranches.includes(b);
-                return (
-                  <button
-                    key={b}
-                    onClick={() => handleBranchToggle(b)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all flex items-center gap-1 ${
-                      active
-                        ? "bg-slate-900 border-slate-900 text-white shadow-sm"
-                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    {active && (
-                      <CheckCircle className="w-3 h-3 text-green-400" />
-                    )}{" "}
-                    {b}
-                  </button>
-                );
-              })}
+          <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-4">
+            <div>
+              <span className="text-xs font-bold text-slate-400 uppercase block mb-2 flex items-center gap-1">
+                <Building2 className="w-3.5 h-3.5" /> 分院篩選
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {BRANCHES.map((b) => {
+                  const active = selectedBranches.includes(b);
+                  return (
+                    <button
+                      key={b}
+                      onClick={() => handleBranchToggle(b)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all flex items-center gap-1 ${
+                        active
+                          ? "bg-slate-900 border-slate-900 text-white shadow-sm"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      {active && (
+                        <CheckCircle className="w-3 h-3 text-green-400" />
+                      )}{" "}
+                      {b}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <span className="text-xs font-bold text-slate-400 uppercase block mb-2 flex items-center gap-1">
+                <Activity className="w-3.5 h-3.5" /> 圖表指標
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {METRICS.map((m) => {
+                  const active = selectedMetrics.includes(m.key);
+                  return (
+                    <button
+                      key={m.key}
+                      onClick={() => handleMetricToggle(m.key)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all flex items-center gap-1 ${
+                        active
+                          ? "text-white shadow-sm"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                      style={
+                        active
+                          ? { backgroundColor: m.color, borderColor: m.color }
+                          : {}
+                      }
+                    >
+                      {active && <CheckCircle className="w-3 h-3 text-white" />}{" "}
+                      {m.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
