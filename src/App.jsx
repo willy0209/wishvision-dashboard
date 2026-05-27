@@ -28,7 +28,6 @@ import {
   Activity,
 } from "lucide-react";
 
-// 您專屬的 WishVision Firebase 配置
 const firebaseConfig = {
   apiKey: "AIzaSyC-NBub5GWvKxUuEfWPzdeI-M0VPFkHCw",
   authDomain: "wishvision-predict-system.firebaseapp.com",
@@ -78,7 +77,6 @@ export default function App() {
   });
   const [viewMode, setViewMode] = useState("aggregate");
 
-  // 即時監聽 Firestore 資料
   useEffect(() => {
     const unsubscribe = onSnapshot(
       collection(db, "wishvision_stats"),
@@ -165,7 +163,6 @@ export default function App() {
   };
 
   const { chartData, summaryMetrics, latestUpdateStr } = useMemo(() => {
-    // 相容舊資料
     const filtered = dbData.filter((d) => {
       const docMonth = d.month || (d.date ? d.date.slice(0, 7) : "");
       return docMonth === selectedMonth;
@@ -304,7 +301,6 @@ export default function App() {
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
-  // 動態渲染圖表曲線 (確保語法正確)
   const renderChartLines = () => {
     if (viewMode === "aggregate") {
       return METRICS.filter((m) => selectedMetrics.includes(m.key)).map((m) => (
@@ -366,7 +362,6 @@ export default function App() {
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-slate-900">
               <PlusCircle className="w-5 h-5 text-blue-500" /> 新增每日動能紀錄
             </h2>
-
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">
@@ -377,10 +372,9 @@ export default function App() {
                   name="date"
                   value={formData.date}
                   onChange={handleFormChange}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500"
                 />
               </div>
-
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">
                   分院
@@ -389,7 +383,7 @@ export default function App() {
                   name="branch"
                   value={formData.branch}
                   onChange={handleFormChange}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500"
                 >
                   {BRANCHES.map((b) => (
                     <option key={b} value={b}>
@@ -398,67 +392,52 @@ export default function App() {
                   ))}
                 </select>
               </div>
-
-              <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100/50 space-y-3">
+              <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 space-y-3">
                 <span className="text-xs font-bold text-blue-700 flex items-center gap-1">
-                  當月累積指標 ({parseInt(formData.date.split("-")[1], 10)}月)
+                  當月累積指標
                 </span>
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <input
-                      type="number"
-                      name="currentC"
-                      placeholder="諮詢量"
-                      value={formData.currentC}
-                      onChange={handleFormChange}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <input
-                      type="number"
-                      name="currentS"
-                      placeholder="手術量"
-                      value={formData.currentS}
-                      onChange={handleFormChange}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
+                  <input
+                    type="number"
+                    name="currentC"
+                    placeholder="諮詢量"
+                    value={formData.currentC}
+                    onChange={handleFormChange}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                  <input
+                    type="number"
+                    name="currentS"
+                    placeholder="手術量"
+                    value={formData.currentS}
+                    onChange={handleFormChange}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  />
                 </div>
               </div>
-
-              <div className="bg-purple-50/50 p-3 rounded-xl border border-purple-100/50 space-y-3">
+              <div className="bg-purple-50 p-3 rounded-xl border border-purple-100 space-y-3">
                 <span className="text-xs font-bold text-purple-700 flex items-center gap-1">
-                  下月預約儲備 (
-                  {parseInt(formData.date.split("-")[1], 10) === 12
-                    ? 1
-                    : parseInt(formData.date.split("-")[1], 10) + 1}
-                  月)
+                  下月預約儲備
                 </span>
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <input
-                      type="number"
-                      name="nextC"
-                      placeholder="預約諮詢"
-                      value={formData.nextC}
-                      onChange={handleFormChange}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <input
-                      type="number"
-                      name="nextS"
-                      placeholder="預約手術"
-                      value={formData.nextS}
-                      onChange={handleFormChange}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
+                  <input
+                    type="number"
+                    name="nextC"
+                    placeholder="預約諮詢"
+                    value={formData.nextC}
+                    onChange={handleFormChange}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                  <input
+                    type="number"
+                    name="nextS"
+                    placeholder="預約手術"
+                    value={formData.nextS}
+                    onChange={handleFormChange}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  />
                 </div>
               </div>
-
               <button
                 type="submit"
                 disabled={uiStatus.loading}
@@ -470,15 +449,12 @@ export default function App() {
                   "儲存今日紀錄"
                 )}
               </button>
-
               {uiStatus.msg && (
                 <div
                   className={`text-xs p-3 rounded-xl border text-center font-medium ${
                     uiStatus.type === "success"
-                      ? "bg-green-50 border-green-200 text-green-700"
-                      : uiStatus.type === "error"
-                      ? "bg-red-50 border-red-200 text-red-700"
-                      : "bg-blue-50 border-blue-200 text-blue-700"
+                      ? "bg-green-50 text-green-700"
+                      : "bg-red-50 text-red-700"
                   }`}
                 >
                   {uiStatus.msg}
@@ -510,7 +486,7 @@ export default function App() {
                     : "text-slate-500 hover:text-slate-800"
                 }`}
               >
-                合併加總模式
+                合併加總
               </button>
               <button
                 onClick={() => setViewMode("compare")}
@@ -520,75 +496,70 @@ export default function App() {
                     : "text-slate-500 hover:text-slate-800"
                 }`}
               >
-                分院對比模式
+                分院對比
               </button>
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-4">
+          <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <span className="text-xs font-bold text-slate-400 uppercase block mb-2 flex items-center gap-1">
                 <Building2 className="w-3.5 h-3.5" /> 分院篩選
               </span>
               <div className="flex flex-wrap gap-2">
-                {BRANCHES.map((b) => {
-                  const active = selectedBranches.includes(b);
-                  return (
-                    <button
-                      key={b}
-                      onClick={() => handleBranchToggle(b)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all flex items-center gap-1 ${
-                        active
-                          ? "bg-slate-900 border-slate-900 text-white shadow-sm"
-                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                      }`}
-                    >
-                      {active && (
-                        <CheckCircle className="w-3 h-3 text-green-400" />
-                      )}{" "}
-                      {b}
-                    </button>
-                  );
-                })}
+                {BRANCHES.map((b) => (
+                  <button
+                    key={b}
+                    onClick={() => handleBranchToggle(b)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all flex items-center gap-1 ${
+                      selectedBranches.includes(b)
+                        ? "bg-slate-900 border-slate-900 text-white"
+                        : "bg-white text-slate-600"
+                    }`}
+                  >
+                    {selectedBranches.includes(b) && (
+                      <CheckCircle className="w-3 h-3 text-green-400" />
+                    )}{" "}
+                    {b}
+                  </button>
+                ))}
               </div>
             </div>
-
             <div>
               <span className="text-xs font-bold text-slate-400 uppercase block mb-2 flex items-center gap-1">
                 <Activity className="w-3.5 h-3.5" /> 圖表指標
               </span>
               <div className="flex flex-wrap gap-2">
-                {METRICS.map((m) => {
-                  const active = selectedMetrics.includes(m.key);
-                  return (
-                    <button
-                      key={m.key}
-                      onClick={() => handleMetricToggle(m.key)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all flex items-center gap-1 ${
-                        active
-                          ? "text-white shadow-sm"
-                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                      }`}
-                      style={
-                        active
-                          ? { backgroundColor: m.color, borderColor: m.color }
-                          : {}
-                      }
-                    >
-                      {active && <CheckCircle className="w-3 h-3 text-white" />}{" "}
-                      {m.label}
-                    </button>
-                  );
-                })}
+                {METRICS.map((m) => (
+                  <button
+                    key={m.key}
+                    onClick={() => handleMetricToggle(m.key)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all flex items-center gap-1 ${
+                      selectedMetrics.includes(m.key)
+                        ? "text-white"
+                        : "bg-white text-slate-600"
+                    }`}
+                    style={
+                      selectedMetrics.includes(m.key)
+                        ? { backgroundColor: m.color, borderColor: m.color }
+                        : {}
+                    }
+                  >
+                    {selectedMetrics.includes(m.key) && (
+                      <CheckCircle className="w-3 h-3 text-white" />
+                    )}{" "}
+                    {m.label}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-              <div className="bg-blue-600 px-4 py-2.5 text-white font-semibold text-sm flex justify-between items-center">
-                <span>諮詢量動能 (所選分院加總)</span>
-                <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full font-normal">
+              <div className="bg-blue-600 px-4 py-2 text-white font-semibold text-sm flex justify-between items-center">
+                <span>諮詢量動能</span>
+                <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">
                   Run-Rate 預測
                 </span>
               </div>
@@ -600,7 +571,7 @@ export default function App() {
                   <p className="text-2xl font-bold text-blue-600 mt-1">
                     {summaryMetrics.currentC}
                   </p>
-                  <p className="text-xs text-slate-400 mt-2">
+                  <p className="text-xs text-slate-400 mt-1">
                     下月預約：
                     <span className="font-semibold text-slate-700">
                       {summaryMetrics.nextC}
@@ -614,7 +585,7 @@ export default function App() {
                   <p className="text-2xl font-black text-slate-900 mt-1">
                     {summaryMetrics.foreC}
                   </p>
-                  <p className="text-xs text-slate-400 mt-2">
+                  <p className="text-xs text-slate-400 mt-1">
                     下月預估存量：
                     <span className="font-semibold text-slate-700">
                       {summaryMetrics.foreNextC}
@@ -623,11 +594,10 @@ export default function App() {
                 </div>
               </div>
             </div>
-
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-              <div className="bg-emerald-600 px-4 py-2.5 text-white font-semibold text-sm flex justify-between items-center">
-                <span>手術量動能 (所選分院加總)</span>
-                <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full font-normal">
+              <div className="bg-emerald-600 px-4 py-2 text-white font-semibold text-sm flex justify-between items-center">
+                <span>手術量動能</span>
+                <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">
                   Run-Rate 預測
                 </span>
               </div>
@@ -639,7 +609,7 @@ export default function App() {
                   <p className="text-2xl font-bold text-emerald-600 mt-1">
                     {summaryMetrics.currentS}
                   </p>
-                  <p className="text-xs text-slate-400 mt-2">
+                  <p className="text-xs text-slate-400 mt-1">
                     下月預約：
                     <span className="font-semibold text-slate-700">
                       {summaryMetrics.nextS}
@@ -653,7 +623,7 @@ export default function App() {
                   <p className="text-2xl font-black text-slate-900 mt-1">
                     {summaryMetrics.foreS}
                   </p>
-                  <p className="text-xs text-slate-400 mt-2">
+                  <p className="text-xs text-slate-400 mt-1">
                     下月預估存量：
                     <span className="font-semibold text-slate-700">
                       {summaryMetrics.foreNextS}
@@ -671,7 +641,7 @@ export default function App() {
             <div className="w-full h-80">
               {chartData.length === 0 ? (
                 <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">
-                  該月份目前尚無數據紀錄
+                  尚無數據
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
