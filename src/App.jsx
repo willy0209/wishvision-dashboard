@@ -27,7 +27,6 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-// 您專屬的 WishVision Firebase 配置
 const firebaseConfig = {
   apiKey: "AIzaSyC-NBub5GWvKxUuEfWPzdeI-M0VPFkHCw",
   authDomain: "wishvision-predict-system.firebaseapp.com",
@@ -141,12 +140,19 @@ export default function App() {
   };
 
   const { chartData, summaryMetrics, latestUpdateStr } = useMemo(() => {
-    const filtered = dbData.filter((d) => d.month === selectedMonth);
+    // 💡 相容性更新：確保舊資料（沒有 month 欄位）也能被正確讀取
+    const filtered = dbData.filter((d) => {
+      const docMonth = d.month || (d.date ? d.date.slice(0, 7) : "");
+      return docMonth === selectedMonth;
+    });
+
     const uniqueDates = Array.from(new Set(filtered.map((d) => d.date))).sort();
 
     let maxDayPassed = 1;
     filtered.forEach((d) => {
-      if (d.day > maxDayPassed) maxDayPassed = d.day;
+      // 💡 相容性更新：確保舊資料也能正確抓出日期來算天數
+      const docDay = d.day || (d.date ? parseInt(d.date.split("-")[2], 10) : 1);
+      if (docDay > maxDayPassed) maxDayPassed = docDay;
     });
 
     const [year, month] = selectedMonth.split("-").map(Number);
@@ -216,7 +222,15 @@ export default function App() {
     selectedBranches.forEach((b) => {
       const activeData = filtered
         .filter((d) => d.branch === b)
-        .sort((a, b) => b.day - a.day || b.timestamp - a.timestamp)[0];
+        .sort((a, b) => {
+          // 💡 相容性更新：確保舊資料排序不會出錯
+          const dayA =
+            a.day || (a.date ? parseInt(a.date.split("-")[2], 10) : 0);
+          const dayB =
+            b.day || (b.date ? parseInt(b.date.split("-")[2], 10) : 0);
+          return dayB - dayA || b.timestamp - a.timestamp;
+        })[0];
+
       if (activeData) {
         totalCurrentC += activeData.currentC || 0;
         totalCurrentS += activeData.currentS || 0;
