@@ -27,6 +27,7 @@ import {
   RefreshCw,
   Activity,
   Zap,
+  Star,
 } from "lucide-react";
 
 const firebaseConfig = {
@@ -58,6 +59,7 @@ export default function App() {
     currentS: "",
     nextC: "",
     nextS: "",
+    reviews: "", // 新增評論數狀態
   });
 
   const [selectedMonth, setSelectedMonth] = useState(
@@ -123,9 +125,10 @@ export default function App() {
     e.preventDefault();
     setUiStatus({ loading: true, msg: "正在儲存紀錄...", type: "info" });
 
-    const { date, branch, currentC, currentS, nextC, nextS } = formData;
+    const { date, branch, currentC, currentS, nextC, nextS, reviews } =
+      formData;
     if (!currentC || !currentS || !nextC || !nextS) {
-      setUiStatus({ loading: false, msg: "請填寫所有數據欄位", type: "error" });
+      setUiStatus({ loading: false, msg: "請填寫業績數據欄位", type: "error" });
       return;
     }
 
@@ -140,6 +143,7 @@ export default function App() {
         currentS: parseInt(currentS, 10),
         nextC: parseInt(nextC, 10),
         nextS: parseInt(nextS, 10),
+        reviews: reviews ? parseInt(reviews, 10) : 0, // 儲存評論數
         timestamp: Date.now(),
       });
       setUiStatus({ loading: false, msg: "紀錄儲存成功！", type: "success" });
@@ -149,6 +153,7 @@ export default function App() {
         currentS: "",
         nextC: "",
         nextS: "",
+        reviews: "",
       }));
       setTimeout(
         () => setUiStatus({ loading: false, msg: "", type: "" }),
@@ -243,8 +248,6 @@ export default function App() {
         baseNextS = 0;
       let minDay = null;
       let maxDay = null;
-
-      // 💡 計算個別分院的日增動能
       let computedBranchStats = [];
 
       BRANCHES.forEach((b) => {
@@ -278,10 +281,14 @@ export default function App() {
           const dailyAvgS =
             bDaysDiff > 0 ? (diffS / bDaysDiff).toFixed(1) : "0.0";
 
+          // 抓取最新評論數
+          const latestReviews = lastDoc.reviews || 0;
+
           computedBranchStats.push({
             branch: b,
             avgC: dailyAvgC,
             avgS: dailyAvgS,
+            reviews: latestReviews,
             hasData: bDaysDiff > 0,
             isFiltered: selectedBranches.includes(b),
           });
@@ -305,6 +312,7 @@ export default function App() {
             branch: b,
             avgC: "0.0",
             avgS: "0.0",
+            reviews: 0,
             hasData: false,
             isFiltered: selectedBranches.includes(b),
           });
@@ -503,6 +511,23 @@ export default function App() {
                   />
                 </div>
               </div>
+              {/* 💡 新增：口碑指標 (Google 評論) 輸入區塊 */}
+              <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 space-y-3">
+                <span className="text-xs font-bold text-amber-700 flex items-center gap-1">
+                  <Star className="w-3.5 h-3.5 fill-amber-500" /> 口碑聲量指標
+                </span>
+                <div>
+                  <input
+                    type="number"
+                    name="reviews"
+                    placeholder="目前 Google 評論總則數 (選填)"
+                    value={formData.reviews}
+                    onChange={handleFormChange}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
               <button
                 type="submit"
                 disabled={uiStatus.loading}
@@ -514,6 +539,7 @@ export default function App() {
                   "儲存今日紀錄"
                 )}
               </button>
+
               {uiStatus.msg && (
                 <div
                   className={`text-xs p-3 rounded-xl border text-center font-medium ${
@@ -622,11 +648,10 @@ export default function App() {
             </div>
           </div>
 
-          {/* 💡 新增：個別分院實質日增量動能觀測台 */}
           <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100">
             <span className="text-xs font-bold text-slate-400 uppercase block mb-3 flex items-center gap-1">
               <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />{" "}
-              各分院實質日增動能 (當月每日平均新增)
+              各分院實質日增動能與口碑
             </span>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {branchStats.map((s) => (
@@ -654,12 +679,16 @@ export default function App() {
                         +{s.avgS} /天
                       </span>
                     </div>
+                    {/* 💡 新增：顯示最新 Google 評論數 */}
+                    <div className="flex justify-between text-[11px] mt-1.5 pt-1.5 border-t border-slate-200/60">
+                      <span className="text-slate-400 flex items-center gap-0.5">
+                        <Star className="w-3 h-3 text-amber-400" /> 評論數:
+                      </span>
+                      <span className="font-bold text-slate-700">
+                        {s.reviews > 0 ? s.reviews : "--"}
+                      </span>
+                    </div>
                   </div>
-                  {!s.hasData && s.isFiltered && (
-                    <p className="text-[9px] text-amber-600 font-medium mt-1.5">
-                      ⚠️ 尚待第2筆紀錄計算
-                    </p>
-                  )}
                 </div>
               ))}
             </div>
