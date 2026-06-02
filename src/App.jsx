@@ -26,6 +26,7 @@ import {
   CheckCircle,
   RefreshCw,
   Activity,
+  Zap,
 } from "lucide-react";
 
 const firebaseConfig = {
@@ -162,181 +163,208 @@ export default function App() {
     }
   };
 
-  const { chartData, summaryMetrics, latestUpdateStr } = useMemo(() => {
-    const filtered = dbData.filter((d) => {
-      const docMonth = d.month || (d.date ? d.date.slice(0, 7) : "");
-      return docMonth === selectedMonth;
-    });
-
-    const uniqueDates = Array.from(new Set(filtered.map((d) => d.date))).sort();
-    const [year, month] = selectedMonth.split("-").map(Number);
-    const totalDaysInMonth = new Date(year, month, 0).getDate();
-
-    let chartDataAggregate = [];
-    let branchLatest = {};
-
-    BRANCHES.forEach((b) => {
-      branchLatest[b] = {
-        currentC: 0,
-        currentS: 0,
-        nextC: 0,
-        nextS: 0,
-        day: 0,
-      };
-    });
-
-    uniqueDates.forEach((dateStr) => {
-      const currentDayDocs = filtered.filter((d) => d.date === dateStr);
-      currentDayDocs.forEach((d) => {
-        if (d.timestamp > (branchLatest[d.branch]?.timestamp || 0)) {
-          branchLatest[d.branch] = d;
-        }
+  const { chartData, summaryMetrics, branchStats, latestUpdateStr } =
+    useMemo(() => {
+      const filtered = dbData.filter((d) => {
+        const docMonth = d.month || (d.date ? d.date.slice(0, 7) : "");
+        return docMonth === selectedMonth;
       });
 
-      let aggRow = {
-        date: dateStr.slice(5),
-        currentC: 0,
-        currentS: 0,
-        nextC: 0,
-        nextS: 0,
-      };
+      const uniqueDates = Array.from(
+        new Set(filtered.map((d) => d.date))
+      ).sort();
+      const [year, month] = selectedMonth.split("-").map(Number);
+      const totalDaysInMonth = new Date(year, month, 0).getDate();
 
-      selectedBranches.forEach((b) => {
-        const bData = filtered.filter(
-          (d) => d.date === dateStr && d.branch === b
-        );
-        if (bData.length > 0) {
-          const latestDayDoc = bData.sort(
-            (a, b) => b.timestamp - a.timestamp
-          )[0];
-          branchLatest[b] = latestDayDoc;
-        }
+      let chartDataAggregate = [];
+      let branchLatest = {};
 
-        const activeData = branchLatest[b];
-        if (activeData) {
-          aggRow.currentC += activeData.currentC || 0;
-          aggRow.currentS += activeData.currentS || 0;
-          aggRow.nextC += activeData.nextC || 0;
-          aggRow.nextS += activeData.nextS || 0;
-
-          aggRow[`${b}_currentC`] = activeData.currentC || 0;
-          aggRow[`${b}_currentS`] = activeData.currentS || 0;
-          aggRow[`${b}_nextC`] = activeData.nextC || 0;
-          aggRow[`${b}_nextS`] = activeData.nextS || 0;
-        }
+      BRANCHES.forEach((b) => {
+        branchLatest[b] = {
+          currentC: 0,
+          currentS: 0,
+          nextC: 0,
+          nextS: 0,
+          day: 0,
+        };
       });
 
-      chartDataAggregate.push(aggRow);
-    });
-
-    // 💡 方案 A 核心邏輯：區分「期初基本盤」與「目前最新累積」
-    let totalCurrentC = 0,
-      totalCurrentS = 0,
-      totalNextC = 0,
-      totalNextS = 0; // 最新累積
-    let baseCurrentC = 0,
-      baseCurrentS = 0,
-      baseNextC = 0,
-      baseNextS = 0; // 期初基本盤
-    let minDay = null;
-    let maxDay = null;
-
-    selectedBranches.forEach((b) => {
-      // 將該分院當月的所有紀錄按「日期」由舊到新排序
-      const bDataAsc = filtered
-        .filter((d) => d.branch === b)
-        .sort((a, b) => {
-          const dayA =
-            a.day || (a.date ? parseInt(a.date.split("-")[2], 10) : 0);
-          const dayB =
-            b.day || (b.date ? parseInt(b.date.split("-")[2], 10) : 0);
-          return dayA - dayB || a.timestamp - b.timestamp;
+      uniqueDates.forEach((dateStr) => {
+        const currentDayDocs = filtered.filter((d) => d.date === dateStr);
+        currentDayDocs.forEach((d) => {
+          if (d.timestamp > (branchLatest[d.branch]?.timestamp || 0)) {
+            branchLatest[d.branch] = d;
+          }
         });
 
-      if (bDataAsc.length > 0) {
-        // 第一筆紀錄視為「基本盤」
-        const firstDoc = bDataAsc[0];
-        // 最後一筆紀錄視為「目前累積」
-        const lastDoc = bDataAsc[bDataAsc.length - 1];
+        let aggRow = {
+          date: dateStr.slice(5),
+          currentC: 0,
+          currentS: 0,
+          nextC: 0,
+          nextS: 0,
+        };
 
-        baseCurrentC += firstDoc.currentC || 0;
-        baseCurrentS += firstDoc.currentS || 0;
-        baseNextC += firstDoc.nextC || 0;
-        baseNextS += firstDoc.nextS || 0;
+        selectedBranches.forEach((b) => {
+          const bData = filtered.filter(
+            (d) => d.date === dateStr && d.branch === b
+          );
+          if (bData.length > 0) {
+            const latestDayDoc = bData.sort(
+              (a, b) => b.timestamp - a.timestamp
+            )[0];
+            branchLatest[b] = latestDayDoc;
+          }
 
-        totalCurrentC += lastDoc.currentC || 0;
-        totalCurrentS += lastDoc.currentS || 0;
-        totalNextC += lastDoc.nextC || 0;
-        totalNextS += lastDoc.nextS || 0;
+          const activeData = branchLatest[b];
+          if (activeData) {
+            aggRow.currentC += activeData.currentC || 0;
+            aggRow.currentS += activeData.currentS || 0;
+            aggRow.nextC += activeData.nextC || 0;
+            aggRow.nextS += activeData.nextS || 0;
 
-        const firstDay =
-          firstDoc.day ||
-          (firstDoc.date ? parseInt(firstDoc.date.split("-")[2], 10) : 1);
-        const lastDay =
-          lastDoc.day ||
-          (lastDoc.date ? parseInt(lastDoc.date.split("-")[2], 10) : 1);
+            aggRow[`${b}_currentC`] = activeData.currentC || 0;
+            aggRow[`${b}_currentS`] = activeData.currentS || 0;
+            aggRow[`${b}_nextC`] = activeData.nextC || 0;
+            aggRow[`${b}_nextS`] = activeData.nextS || 0;
+          }
+        });
 
-        if (minDay === null || firstDay < minDay) minDay = firstDay;
-        if (maxDay === null || lastDay > maxDay) maxDay = lastDay;
+        chartDataAggregate.push(aggRow);
+      });
+
+      let totalCurrentC = 0,
+        totalCurrentS = 0,
+        totalNextC = 0,
+        totalNextS = 0;
+      let baseCurrentC = 0,
+        baseCurrentS = 0,
+        baseNextC = 0,
+        baseNextS = 0;
+      let minDay = null;
+      let maxDay = null;
+
+      // 💡 計算個別分院的日增動能
+      let computedBranchStats = [];
+
+      BRANCHES.forEach((b) => {
+        const bDataAsc = filtered
+          .filter((d) => d.branch === b)
+          .sort((a, b) => {
+            const dayA =
+              a.day || (a.date ? parseInt(a.date.split("-")[2], 10) : 0);
+            const dayB =
+              b.day || (b.date ? parseInt(b.date.split("-")[2], 10) : 0);
+            return dayA - dayB || a.timestamp - b.timestamp;
+          });
+
+        if (bDataAsc.length > 0) {
+          const firstDoc = bDataAsc[0];
+          const lastDoc = bDataAsc[bDataAsc.length - 1];
+
+          const fDay =
+            firstDoc.day ||
+            (firstDoc.date ? parseInt(firstDoc.date.split("-")[2], 10) : 1);
+          const lDay =
+            lastDoc.day ||
+            (lastDoc.date ? parseInt(lastDoc.date.split("-")[2], 10) : 1);
+          const bDaysDiff = lDay - fDay;
+
+          const diffC = (lastDoc.currentC || 0) - (firstDoc.currentC || 0);
+          const diffS = (lastDoc.currentS || 0) - (firstDoc.currentS || 0);
+
+          const dailyAvgC =
+            bDaysDiff > 0 ? (diffC / bDaysDiff).toFixed(1) : "0.0";
+          const dailyAvgS =
+            bDaysDiff > 0 ? (diffS / bDaysDiff).toFixed(1) : "0.0";
+
+          computedBranchStats.push({
+            branch: b,
+            avgC: dailyAvgC,
+            avgS: dailyAvgS,
+            hasData: bDaysDiff > 0,
+            isFiltered: selectedBranches.includes(b),
+          });
+
+          if (selectedBranches.includes(b)) {
+            baseCurrentC += firstDoc.currentC || 0;
+            baseCurrentS += firstDoc.currentS || 0;
+            baseNextC += firstDoc.nextC || 0;
+            baseNextS += firstDoc.nextS || 0;
+
+            totalCurrentC += lastDoc.currentC || 0;
+            totalCurrentS += lastDoc.currentS || 0;
+            totalNextC += lastDoc.nextC || 0;
+            totalNextS += lastDoc.nextS || 0;
+
+            if (minDay === null || fDay < minDay) minDay = fDay;
+            if (maxDay === null || lDay > maxDay) maxDay = lDay;
+          }
+        } else {
+          computedBranchStats.push({
+            branch: b,
+            avgC: "0.0",
+            avgS: "0.0",
+            hasData: false,
+            isFiltered: selectedBranches.includes(b),
+          });
+        }
+      });
+
+      const daysDiff = maxDay !== null && minDay !== null ? maxDay - minDay : 0;
+      const remainingDays = maxDay !== null ? totalDaysInMonth - maxDay : 0;
+      const progressText =
+        maxDay !== null
+          ? `${maxDay}/${totalDaysInMonth}天`
+          : `0/${totalDaysInMonth}天`;
+
+      let forecastCurrentC = totalCurrentC;
+      let forecastCurrentS = totalCurrentS;
+      let forecastNextC = totalNextC;
+      let forecastNextS = totalNextS;
+
+      if (daysDiff > 0) {
+        forecastCurrentC = Math.round(
+          totalCurrentC +
+            ((totalCurrentC - baseCurrentC) / daysDiff) * remainingDays
+        );
+        forecastCurrentS = Math.round(
+          totalCurrentS +
+            ((totalCurrentS - baseCurrentS) / daysDiff) * remainingDays
+        );
+        forecastNextC = Math.round(
+          totalNextC + ((totalNextC - baseNextC) / daysDiff) * remainingDays
+        );
+        forecastNextS = Math.round(
+          totalNextS + ((totalNextS - baseNextS) / daysDiff) * remainingDays
+        );
       }
-    });
 
-    // 計算實際產生新業績的天數區間
-    const daysDiff = maxDay !== null && minDay !== null ? maxDay - minDay : 0;
-    const remainingDays = maxDay !== null ? totalDaysInMonth - maxDay : 0;
-    const progressText =
-      maxDay !== null
-        ? `${maxDay}/${totalDaysInMonth}天`
-        : `0/${totalDaysInMonth}天`;
+      let latestTs = 0;
+      filtered.forEach((d) => {
+        if (d.timestamp > latestTs) latestTs = d.timestamp;
+      });
+      const latestUpdateStr = latestTs
+        ? new Date(latestTs).toLocaleTimeString()
+        : "無";
 
-    // 預設預估落點為目前總數（適用於當月只有1筆紀錄，無法計算斜率時）
-    let forecastCurrentC = totalCurrentC;
-    let forecastCurrentS = totalCurrentS;
-    let forecastNextC = totalNextC;
-    let forecastNextS = totalNextS;
-
-    // 💡 只有當有超過1天的資料時，才開始推算新增動能
-    if (daysDiff > 0) {
-      forecastCurrentC = Math.round(
-        totalCurrentC +
-          ((totalCurrentC - baseCurrentC) / daysDiff) * remainingDays
-      );
-      forecastCurrentS = Math.round(
-        totalCurrentS +
-          ((totalCurrentS - baseCurrentS) / daysDiff) * remainingDays
-      );
-      forecastNextC = Math.round(
-        totalNextC + ((totalNextC - baseNextC) / daysDiff) * remainingDays
-      );
-      forecastNextS = Math.round(
-        totalNextS + ((totalNextS - baseNextS) / daysDiff) * remainingDays
-      );
-    }
-
-    let latestTs = 0;
-    filtered.forEach((d) => {
-      if (d.timestamp > latestTs) latestTs = d.timestamp;
-    });
-    const latestUpdateStr = latestTs
-      ? new Date(latestTs).toLocaleTimeString()
-      : "無";
-
-    return {
-      chartData: chartDataAggregate,
-      summaryMetrics: {
-        currentC: totalCurrentC,
-        currentS: totalCurrentS,
-        nextC: totalNextC,
-        nextS: totalNextS,
-        foreC: forecastCurrentC,
-        foreS: forecastCurrentS,
-        foreNextC: forecastNextC,
-        foreNextS: forecastNextS,
-        progress: progressText,
-      },
-      latestUpdateStr,
-    };
-  }, [dbData, selectedMonth, selectedBranches]);
+      return {
+        chartData: chartDataAggregate,
+        summaryMetrics: {
+          currentC: totalCurrentC,
+          currentS: totalCurrentS,
+          nextC: totalNextC,
+          nextS: totalNextS,
+          foreC: forecastCurrentC,
+          foreS: forecastCurrentS,
+          foreNextC: forecastNextC,
+          foreNextS: forecastNextS,
+          progress: progressText,
+        },
+        branchStats: computedBranchStats,
+        latestUpdateStr,
+      };
+    }, [dbData, selectedMonth, selectedBranches]);
 
   const renderChartLines = () => {
     if (viewMode === "aggregate") {
@@ -486,7 +514,6 @@ export default function App() {
                   "儲存今日紀錄"
                 )}
               </button>
-
               {uiStatus.msg && (
                 <div
                   className={`text-xs p-3 rounded-xl border text-center font-medium ${
@@ -592,6 +619,49 @@ export default function App() {
                   </button>
                 ))}
               </div>
+            </div>
+          </div>
+
+          {/* 💡 新增：個別分院實質日增量動能觀測台 */}
+          <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100">
+            <span className="text-xs font-bold text-slate-400 uppercase block mb-3 flex items-center gap-1">
+              <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />{" "}
+              各分院實質日增動能 (當月每日平均新增)
+            </span>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {branchStats.map((s) => (
+                <div
+                  key={s.branch}
+                  className={`p-3 rounded-xl border transition-all ${
+                    s.isFiltered
+                      ? "bg-slate-50/80 border-slate-200"
+                      : "bg-white border-slate-100 opacity-40"
+                  }`}
+                >
+                  <p className="text-xs font-bold text-slate-700 truncate">
+                    {s.branch}
+                  </p>
+                  <div className="mt-2 space-y-1">
+                    <div className="flex justify-between text-[11px]">
+                      <span className="text-slate-400">諮詢日增:</span>
+                      <span className="font-semibold text-blue-600">
+                        +{s.avgC} /天
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-[11px]">
+                      <span className="text-slate-400">手術日增:</span>
+                      <span className="font-semibold text-emerald-600">
+                        +{s.avgS} /天
+                      </span>
+                    </div>
+                  </div>
+                  {!s.hasData && s.isFiltered && (
+                    <p className="text-[9px] text-amber-600 font-medium mt-1.5">
+                      ⚠️ 尚待第2筆紀錄計算
+                    </p>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
 
