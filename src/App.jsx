@@ -169,13 +169,6 @@ export default function App() {
     });
 
     const uniqueDates = Array.from(new Set(filtered.map((d) => d.date))).sort();
-
-    let maxDayPassed = 1;
-    filtered.forEach((d) => {
-      const docDay = d.day || (d.date ? parseInt(d.date.split("-")[2], 10) : 1);
-      if (docDay > maxDayPassed) maxDayPassed = docDay;
-    });
-
     const [year, month] = selectedMonth.split("-").map(Number);
     const totalDaysInMonth = new Date(year, month, 0).getDate();
 
@@ -236,45 +229,89 @@ export default function App() {
       chartDataAggregate.push(aggRow);
     });
 
+    // 💡 方案 A 核心邏輯：區分「期初基本盤」與「目前最新累積」
     let totalCurrentC = 0,
       totalCurrentS = 0,
       totalNextC = 0,
-      totalNextS = 0;
+      totalNextS = 0; // 最新累積
+    let baseCurrentC = 0,
+      baseCurrentS = 0,
+      baseNextC = 0,
+      baseNextS = 0; // 期初基本盤
+    let minDay = null;
+    let maxDay = null;
+
     selectedBranches.forEach((b) => {
-      const activeData = filtered
+      // 將該分院當月的所有紀錄按「日期」由舊到新排序
+      const bDataAsc = filtered
         .filter((d) => d.branch === b)
         .sort((a, b) => {
           const dayA =
             a.day || (a.date ? parseInt(a.date.split("-")[2], 10) : 0);
           const dayB =
             b.day || (b.date ? parseInt(b.date.split("-")[2], 10) : 0);
-          return dayB - dayA || b.timestamp - a.timestamp;
-        })[0];
+          return dayA - dayB || a.timestamp - b.timestamp;
+        });
 
-      if (activeData) {
-        totalCurrentC += activeData.currentC || 0;
-        totalCurrentS += activeData.currentS || 0;
-        totalNextC += activeData.nextC || 0;
-        totalNextS += activeData.nextS || 0;
+      if (bDataAsc.length > 0) {
+        // 第一筆紀錄視為「基本盤」
+        const firstDoc = bDataAsc[0];
+        // 最後一筆紀錄視為「目前累積」
+        const lastDoc = bDataAsc[bDataAsc.length - 1];
+
+        baseCurrentC += firstDoc.currentC || 0;
+        baseCurrentS += firstDoc.currentS || 0;
+        baseNextC += firstDoc.nextC || 0;
+        baseNextS += firstDoc.nextS || 0;
+
+        totalCurrentC += lastDoc.currentC || 0;
+        totalCurrentS += lastDoc.currentS || 0;
+        totalNextC += lastDoc.nextC || 0;
+        totalNextS += lastDoc.nextS || 0;
+
+        const firstDay =
+          firstDoc.day ||
+          (firstDoc.date ? parseInt(firstDoc.date.split("-")[2], 10) : 1);
+        const lastDay =
+          lastDoc.day ||
+          (lastDoc.date ? parseInt(lastDoc.date.split("-")[2], 10) : 1);
+
+        if (minDay === null || firstDay < minDay) minDay = firstDay;
+        if (maxDay === null || lastDay > maxDay) maxDay = lastDay;
       }
     });
 
-    const forecastCurrentC =
-      maxDayPassed > 0
-        ? Math.round((totalCurrentC / maxDayPassed) * totalDaysInMonth)
-        : totalCurrentC;
-    const forecastCurrentS =
-      maxDayPassed > 0
-        ? Math.round((totalCurrentS / maxDayPassed) * totalDaysInMonth)
-        : totalCurrentS;
-    const forecastNextC =
-      maxDayPassed > 0
-        ? Math.round((totalNextC / maxDayPassed) * totalDaysInMonth)
-        : totalNextC;
-    const forecastNextS =
-      maxDayPassed > 0
-        ? Math.round((totalNextS / maxDayPassed) * totalDaysInMonth)
-        : totalNextS;
+    // 計算實際產生新業績的天數區間
+    const daysDiff = maxDay !== null && minDay !== null ? maxDay - minDay : 0;
+    const remainingDays = maxDay !== null ? totalDaysInMonth - maxDay : 0;
+    const progressText =
+      maxDay !== null
+        ? `${maxDay}/${totalDaysInMonth}天`
+        : `0/${totalDaysInMonth}天`;
+
+    // 預設預估落點為目前總數（適用於當月只有1筆紀錄，無法計算斜率時）
+    let forecastCurrentC = totalCurrentC;
+    let forecastCurrentS = totalCurrentS;
+    let forecastNextC = totalNextC;
+    let forecastNextS = totalNextS;
+
+    // 💡 只有當有超過1天的資料時，才開始推算新增動能
+    if (daysDiff > 0) {
+      forecastCurrentC = Math.round(
+        totalCurrentC +
+          ((totalCurrentC - baseCurrentC) / daysDiff) * remainingDays
+      );
+      forecastCurrentS = Math.round(
+        totalCurrentS +
+          ((totalCurrentS - baseCurrentS) / daysDiff) * remainingDays
+      );
+      forecastNextC = Math.round(
+        totalNextC + ((totalNextC - baseNextC) / daysDiff) * remainingDays
+      );
+      forecastNextS = Math.round(
+        totalNextS + ((totalNextS - baseNextS) / daysDiff) * remainingDays
+      );
+    }
 
     let latestTs = 0;
     filtered.forEach((d) => {
@@ -295,7 +332,7 @@ export default function App() {
         foreS: forecastCurrentS,
         foreNextC: forecastNextC,
         foreNextS: forecastNextS,
-        progress: `${maxDayPassed}/${totalDaysInMonth}天`,
+        progress: progressText,
       },
       latestUpdateStr,
     };
