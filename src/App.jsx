@@ -19,7 +19,6 @@ import {
   BarChart,
   Bar,
   ComposedChart,
-  Area,
 } from "recharts";
 import {
   Calendar,
@@ -99,16 +98,16 @@ export default function App() {
     "currentS",
     "nextS",
   ]);
-  const [dailyViewMode, setDailyViewMode] = useState("aggregate"); // 每日看板模式
+  const [dailyViewMode, setDailyViewMode] = useState("aggregate");
 
   // 戰略看板狀態
-  const [stratMetric, setStratMetric] = useState("revenue"); // 營收, 諮詢, 手術, 轉換, 成功率
+  const [stratMetric, setStratMetric] = useState("revenue");
   const [stratBaseYear, setStratBaseYear] = useState(
     new Date().getFullYear().toString()
   );
-  const [stratView, setStratView] = useState("macro_A"); // macro_A, macro_B
+  const [stratView, setStratView] = useState("macro_A");
   const [stratBranch, setStratBranch] = useState(BRANCHES[0]);
-  const [stratFilterMode, setStratFilterMode] = useState("aggregate"); // aggregate, compare
+  const [stratFilterMode, setStratFilterMode] = useState("aggregate");
 
   // 維護矩陣狀態
   const [maintYear, setMaintYear] = useState(
@@ -143,7 +142,16 @@ export default function App() {
     };
   }, []);
 
-  // --- 每日動能計算 (避震演算法) ---
+  const handleMetricToggle = (metricKey) => {
+    if (selectedMetrics.includes(metricKey)) {
+      if (selectedMetrics.length > 1)
+        setSelectedMetrics(selectedMetrics.filter((m) => m !== metricKey));
+    } else {
+      setSelectedMetrics([...selectedMetrics, metricKey]);
+    }
+  };
+
+  // --- 每日動能計算 ---
   const dailyMetrics = useMemo(() => {
     const currentMonthDocs = dbData.filter(
       (d) => (d.month || d.date.slice(0, 7)) === selectedMonth
@@ -289,7 +297,7 @@ export default function App() {
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
-  // --- 5. 戰略看板數據矩陣 (大局 BI 邏輯) ---
+  // --- 5. 戰略看板數據矩陣 ---
   const strategyData = useMemo(() => {
     const processedHistory = historyData.map((d) => ({
       ...d,
@@ -301,7 +309,7 @@ export default function App() {
       asp: d.surgery > 0 ? Math.round(d.revenue / d.surgery) : 0,
     }));
 
-    // 1. 年度趨勢 (圖表一)
+    // 1. 年度趨勢
     const yearlyTrend = YEARS.map((y, idx) => {
       const yearDocs = processedHistory.filter(
         (d) =>
@@ -313,18 +321,23 @@ export default function App() {
       const curCon = yearDocs.reduce((acc, cur) => acc + cur.consultation, 0);
       const avgConv =
         yearDocs.length > 0
-          ? (
-              yearDocs.reduce((acc, cur) => acc + cur.conv, 0) / yearDocs.length
-            ).toFixed(1)
+          ? parseFloat(
+              (
+                yearDocs.reduce((acc, cur) => acc + cur.conv, 0) /
+                yearDocs.length
+              ).toFixed(1)
+            )
           : 0;
       const avgSucc =
         yearDocs.length > 0
-          ? (
-              yearDocs.reduce((acc, cur) => acc + cur.succ, 0) / yearDocs.length
-            ).toFixed(1)
+          ? parseFloat(
+              (
+                yearDocs.reduce((acc, cur) => acc + cur.succ, 0) /
+                yearDocs.length
+              ).toFixed(1)
+            )
           : 0;
 
-      // 計算年度 YoY
       const prevYear = (parseInt(y) - 1).toString();
       const prevDocs = processedHistory.filter(
         (d) =>
@@ -349,7 +362,7 @@ export default function App() {
       };
     });
 
-    // 2. 月度 YoY 對比 (圖表二)
+    // 2. 月度 YoY 對比
     const prevYear = (parseInt(stratBaseYear) - 1).toString();
     const monthlyYoY = MONTHS.map((m) => {
       const cur =
@@ -384,7 +397,6 @@ export default function App() {
         baseVal: cV,
         prevVal: pV,
         yoy: calcYoY(cV, pV),
-        // 額外儲存完整數據供表格使用
         curData: cur,
         prevData: prev,
       };
@@ -469,8 +481,72 @@ export default function App() {
     setTimeout(() => setUiStatus({ loading: false, msg: "", type: "" }), 3000);
   };
 
-  // --- 渲染內容 ---
-  const renderTab = () => {
+  const renderDailyChartLines = () => {
+    if (dailyViewMode === "aggregate") {
+      return METRICS.filter((m) => selectedMetrics.includes(m.key)).map((m) => (
+        <Line
+          key={m.key}
+          type="monotone"
+          dataKey={m.key}
+          name={m.label}
+          stroke={m.color}
+          strokeWidth={3}
+          dot={{ r: 4 }}
+          strokeDasharray={m.key.includes("next") ? "5 5" : "0"}
+        />
+      ));
+    } else {
+      let lines = [];
+      const colors = ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"];
+      selectedBranches.forEach((b, idx) => {
+        METRICS.filter((m) => selectedMetrics.includes(m.key)).forEach((m) => {
+          lines.push(
+            <Line
+              key={`${b}_${m.key}`}
+              type="monotone"
+              dataKey={`${b}_${m.key}`}
+              name={`${b} ${m.label}`}
+              stroke={colors[idx % colors.length]}
+              strokeWidth={2}
+              dot={{ r: 2 }}
+              strokeDasharray={m.key.includes("next") ? "5 5" : "0"}
+            />
+          );
+        });
+      });
+      return lines;
+    }
+  };
+
+  const renderDailyReviewsLines = () => {
+    if (dailyViewMode === "aggregate") {
+      return (
+        <Line
+          type="monotone"
+          dataKey="reviews"
+          name="總評論數(所選分院加總)"
+          stroke="#f59e0b"
+          strokeWidth={4}
+          dot={{ r: 4 }}
+        />
+      );
+    } else {
+      const colors = ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"];
+      return selectedBranches.map((b, idx) => (
+        <Line
+          key={`${b}_reviews`}
+          type="monotone"
+          dataKey={`${b}_reviews`}
+          name={`${b} 評論`}
+          stroke={colors[idx % colors.length]}
+          strokeWidth={2}
+          dot={{ r: 3 }}
+        />
+      ));
+    }
+  };
+
+  const renderContent = () => {
     switch (activeTab) {
       case "daily":
         return (
@@ -609,7 +685,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* 右側儀表板 */}
+            {/* 右側觀測看板 */}
             <div className="lg:col-span-2 space-y-6">
               <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-wrap justify-between items-center gap-4">
                 <div className="flex gap-4 items-center">
@@ -669,7 +745,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 每日增量速度 (避震大腦) */}
+              {/* 實質日增動能卡片 */}
               <div className="bg-white rounded-3xl p-4 border border-slate-100">
                 <span className="text-[10px] font-black text-slate-400 uppercase block mb-3 flex items-center gap-1">
                   <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />{" "}
@@ -720,7 +796,7 @@ export default function App() {
                   </p>
                   <h3 className="text-5xl font-black mt-2">
                     {dailyMetrics.totalForeC}{" "}
-                    <span className="text-sm font-medium opacity-50">人</span>
+                    <span className="text-sm font-normal opacity-50">人</span>
                   </h3>
                   <div className="mt-6 flex gap-4 text-[10px] font-black uppercase">
                     <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
@@ -739,7 +815,7 @@ export default function App() {
                   </p>
                   <h3 className="text-5xl font-black mt-2">
                     {dailyMetrics.totalForeS}{" "}
-                    <span className="text-sm font-medium opacity-50">台</span>
+                    <span className="text-sm font-normal opacity-50">台</span>
                   </h3>
                   <div className="mt-6 flex gap-4 text-[10px] font-black uppercase">
                     <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
@@ -753,7 +829,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 圖表區域 (補回遺失組件) */}
+              {/* 主趨勢圖 */}
               <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
                 <div className="flex justify-between items-center mb-6">
                   <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
@@ -764,15 +840,7 @@ export default function App() {
                     {METRICS.map((m) => (
                       <button
                         key={m.key}
-                        onClick={() => {
-                          if (selectedMetrics.includes(m.key)) {
-                            if (selectedMetrics.length > 1)
-                              setSelectedMetrics(
-                                selectedMetrics.filter((x) => x !== m.key)
-                              );
-                          } else
-                            setSelectedMetrics([...selectedMetrics, m.key]);
-                        }}
+                        onClick={() => handleMetricToggle(m.key)}
                         className={`px-2.5 py-1 rounded-lg text-[9px] font-black transition-all border ${
                           selectedMetrics.includes(m.key)
                             ? "text-white"
@@ -824,45 +892,7 @@ export default function App() {
                           paddingTop: "10px",
                         }}
                       />
-                      {dailyViewMode === "aggregate"
-                        ? METRICS.filter((m) =>
-                            selectedMetrics.includes(m.key)
-                          ).map((m) => (
-                            <Line
-                              key={m.key}
-                              type="monotone"
-                              dataKey={m.key}
-                              name={m.label}
-                              stroke={m.color}
-                              strokeWidth={3}
-                              dot={{ r: 3 }}
-                              strokeDasharray={
-                                m.key.includes("next") ? "5 5" : "0"
-                              }
-                            />
-                          ))
-                        : selectedBranches.map((b, i) =>
-                            METRICS.filter((m) =>
-                              selectedMetrics.includes(m.key)
-                            ).map((m) => (
-                              <Line
-                                key={`${b}_${m.key}`}
-                                type="monotone"
-                                dataKey={`${b}_${m.key}`}
-                                name={`${b} ${m.label}`}
-                                stroke={
-                                  ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"][
-                                    i % 4
-                                  ]
-                                }
-                                strokeWidth={2}
-                                dot={{ r: 2 }}
-                                strokeDasharray={
-                                  m.key.includes("next") ? "5 5" : "0"
-                                }
-                              />
-                            ))
-                          )}
+                      {renderDailyChartLines()}
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -904,32 +934,7 @@ export default function App() {
                         iconType="circle"
                         wrapperStyle={{ fontSize: "10px", fontWeight: 900 }}
                       />
-                      {dailyViewMode === "aggregate" ? (
-                        <Line
-                          type="monotone"
-                          dataKey="reviews"
-                          name="總評論數"
-                          stroke="#f59e0b"
-                          strokeWidth={4}
-                          dot={{ r: 4 }}
-                        />
-                      ) : (
-                        selectedBranches.map((b, i) => (
-                          <Line
-                            key={`${b}_reviews`}
-                            type="monotone"
-                            dataKey={`${b}_reviews`}
-                            name={`${b} 評論`}
-                            stroke={
-                              ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"][
-                                i % 4
-                              ]
-                            }
-                            strokeWidth={2}
-                            dot={{ r: 3 }}
-                          />
-                        ))
-                      )}
+                      {renderDailyReviewsLines()}
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -990,7 +995,7 @@ export default function App() {
       case "strategy":
         return (
           <div className="space-y-8 animate-in slide-in-from-bottom duration-500">
-            {/* 1. 年度趨勢 (圖表一) */}
+            {/* 1. 年度大局走勢 */}
             <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
               <div className="flex flex-wrap justify-between items-end gap-6 mb-8">
                 <div>
@@ -1161,7 +1166,7 @@ export default function App() {
                 </ResponsiveContainer>
               </div>
 
-              {/* 表格 B: 年度明細與成長率 */}
+              {/* 💡 修復關鍵 Bug 2：加上 [...] 淺拷貝再 sort，徹底防堵記憶體污染造成的頁籤全白 */}
               <div className="mt-12 overflow-hidden rounded-3xl border border-slate-100">
                 <table className="w-full text-left text-[11px]">
                   <thead className="bg-slate-50 text-slate-400 font-black uppercase">
@@ -1177,7 +1182,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {strategyData.yearlyTrend
+                    {[...strategyData.yearlyTrend]
                       .sort((a, b) => b.name - a.name)
                       .map((y, i) => (
                         <tr
@@ -1233,7 +1238,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* 2. 月度 YoY (圖表二) */}
+            {/* 2. 月度 YoY 戰術對比 */}
             <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
               <div className="flex flex-wrap justify-between items-end gap-6 mb-8">
                 <div>
@@ -1408,6 +1413,63 @@ export default function App() {
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 3. 歷史戰略明細數據庫 */}
+            <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
+              <div className="p-4 bg-slate-100 border-b border-slate-200 flex justify-between items-center">
+                <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest">
+                  歷史戰略明細數據紀錄
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px] text-left">
+                  <thead className="bg-slate-50 text-slate-400 font-bold">
+                    <tr>
+                      <th className="p-3">年份-月</th>
+                      <th className="p-3">分院</th>
+                      <th className="p-3">諮詢</th>
+                      <th className="p-3">手術</th>
+                      <th className="p-3">總營收</th>
+                      <th className="p-3">ASP</th>
+                      <th className="p-3">轉換</th>
+                      <th className="p-3">成功</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {[...strategyData.processedHistory]
+                      .sort((a, b) => b.id.localeCompare(a.id))
+                      .slice(0, 24)
+                      .map((h, i) => (
+                        <tr
+                          key={i}
+                          className="hover:bg-slate-50 transition-colors font-semibold"
+                        >
+                          <td className="p-3 font-bold text-slate-400">
+                            {h.year}-{h.month}
+                          </td>
+                          <td className="p-3 font-black text-slate-800">
+                            {h.branch}
+                          </td>
+                          <td className="p-3">{h.consultation}</td>
+                          <td className="p-3">{h.surgery}</td>
+                          <td className="p-3 font-bold text-slate-900">
+                            ${(h.revenue / 10000).toFixed(1)}萬
+                          </td>
+                          <td className="p-3 text-amber-600 font-black">
+                            ${h.asp.toLocaleString()}
+                          </td>
+                          <td className="p-3 text-purple-600 font-black">
+                            {h.conv}%
+                          </td>
+                          <td className="p-3 text-blue-600 font-black">
+                            {h.succ}%
+                          </td>
+                        </tr>
+                      ))}
                   </tbody>
                 </table>
               </div>
@@ -1645,7 +1707,7 @@ export default function App() {
           </div>
         </div>
       </div>
-      <main className="max-w-7xl mx-auto px-6 py-10">{renderTab()}</main>
+      <main className="max-w-7xl mx-auto px-6 py-10">{renderContent()}</main>
     </div>
   );
 }
