@@ -28,8 +28,10 @@ import {
   Activity,
   Zap,
   Star,
+  Table,
 } from "lucide-react";
 
+// 您專屬的 WishVision Firebase 配置
 const firebaseConfig = {
   apiKey: "AIzaSyC-NBub5GWvKxUuEfWPzdeI-M0VPFkHCw",
   authDomain: "wishvision-predict-system.firebaseapp.com",
@@ -59,7 +61,7 @@ export default function App() {
     currentS: "",
     nextC: "",
     nextS: "",
-    reviews: "", // 新增評論數狀態
+    reviews: "",
   });
 
   const [selectedMonth, setSelectedMonth] = useState(
@@ -143,7 +145,7 @@ export default function App() {
         currentS: parseInt(currentS, 10),
         nextC: parseInt(nextC, 10),
         nextS: parseInt(nextS, 10),
-        reviews: reviews ? parseInt(reviews, 10) : 0, // 儲存評論數
+        reviews: reviews ? parseInt(reviews, 10) : 0,
         timestamp: Date.now(),
       });
       setUiStatus({ loading: false, msg: "紀錄儲存成功！", type: "success" });
@@ -168,211 +170,219 @@ export default function App() {
     }
   };
 
-  const { chartData, summaryMetrics, branchStats, latestUpdateStr } =
-    useMemo(() => {
-      const filtered = dbData.filter((d) => {
-        const docMonth = d.month || (d.date ? d.date.slice(0, 7) : "");
-        return docMonth === selectedMonth;
-      });
+  // 💡 核心運算：篩選、加總、預估、與分支指標
+  const {
+    chartData,
+    summaryMetrics,
+    branchStats,
+    dailyRecords,
+    latestUpdateStr,
+  } = useMemo(() => {
+    const filtered = dbData.filter((d) => {
+      const docMonth = d.month || (d.date ? d.date.slice(0, 7) : "");
+      return docMonth === selectedMonth;
+    });
 
-      const uniqueDates = Array.from(
-        new Set(filtered.map((d) => d.date))
-      ).sort();
-      const [year, month] = selectedMonth.split("-").map(Number);
-      const totalDaysInMonth = new Date(year, month, 0).getDate();
+    const uniqueDates = Array.from(new Set(filtered.map((d) => d.date))).sort();
+    const [year, month] = selectedMonth.split("-").map(Number);
+    const totalDaysInMonth = new Date(year, month, 0).getDate();
 
-      let chartDataAggregate = [];
-      let branchLatest = {};
+    let chartDataAggregate = [];
+    let branchLatest = {};
 
-      BRANCHES.forEach((b) => {
-        branchLatest[b] = {
-          currentC: 0,
-          currentS: 0,
-          nextC: 0,
-          nextS: 0,
-          day: 0,
-        };
-      });
+    BRANCHES.forEach((b) => {
+      branchLatest[b] = {
+        currentC: 0,
+        currentS: 0,
+        nextC: 0,
+        nextS: 0,
+        reviews: 0,
+        day: 0,
+      };
+    });
 
-      uniqueDates.forEach((dateStr) => {
-        const currentDayDocs = filtered.filter((d) => d.date === dateStr);
-        currentDayDocs.forEach((d) => {
-          if (d.timestamp > (branchLatest[d.branch]?.timestamp || 0)) {
-            branchLatest[d.branch] = d;
-          }
-        });
-
-        let aggRow = {
-          date: dateStr.slice(5),
-          currentC: 0,
-          currentS: 0,
-          nextC: 0,
-          nextS: 0,
-        };
-
-        selectedBranches.forEach((b) => {
-          const bData = filtered.filter(
-            (d) => d.date === dateStr && d.branch === b
-          );
-          if (bData.length > 0) {
-            const latestDayDoc = bData.sort(
-              (a, b) => b.timestamp - a.timestamp
-            )[0];
-            branchLatest[b] = latestDayDoc;
-          }
-
-          const activeData = branchLatest[b];
-          if (activeData) {
-            aggRow.currentC += activeData.currentC || 0;
-            aggRow.currentS += activeData.currentS || 0;
-            aggRow.nextC += activeData.nextC || 0;
-            aggRow.nextS += activeData.nextS || 0;
-
-            aggRow[`${b}_currentC`] = activeData.currentC || 0;
-            aggRow[`${b}_currentS`] = activeData.currentS || 0;
-            aggRow[`${b}_nextC`] = activeData.nextC || 0;
-            aggRow[`${b}_nextS`] = activeData.nextS || 0;
-          }
-        });
-
-        chartDataAggregate.push(aggRow);
-      });
-
-      let totalCurrentC = 0,
-        totalCurrentS = 0,
-        totalNextC = 0,
-        totalNextS = 0;
-      let baseCurrentC = 0,
-        baseCurrentS = 0,
-        baseNextC = 0,
-        baseNextS = 0;
-      let minDay = null;
-      let maxDay = null;
-      let computedBranchStats = [];
-
-      BRANCHES.forEach((b) => {
-        const bDataAsc = filtered
-          .filter((d) => d.branch === b)
-          .sort((a, b) => {
-            const dayA =
-              a.day || (a.date ? parseInt(a.date.split("-")[2], 10) : 0);
-            const dayB =
-              b.day || (b.date ? parseInt(b.date.split("-")[2], 10) : 0);
-            return dayA - dayB || a.timestamp - b.timestamp;
-          });
-
-        if (bDataAsc.length > 0) {
-          const firstDoc = bDataAsc[0];
-          const lastDoc = bDataAsc[bDataAsc.length - 1];
-
-          const fDay =
-            firstDoc.day ||
-            (firstDoc.date ? parseInt(firstDoc.date.split("-")[2], 10) : 1);
-          const lDay =
-            lastDoc.day ||
-            (lastDoc.date ? parseInt(lastDoc.date.split("-")[2], 10) : 1);
-          const bDaysDiff = lDay - fDay;
-
-          const diffC = (lastDoc.currentC || 0) - (firstDoc.currentC || 0);
-          const diffS = (lastDoc.currentS || 0) - (firstDoc.currentS || 0);
-
-          const dailyAvgC =
-            bDaysDiff > 0 ? (diffC / bDaysDiff).toFixed(1) : "0.0";
-          const dailyAvgS =
-            bDaysDiff > 0 ? (diffS / bDaysDiff).toFixed(1) : "0.0";
-
-          // 抓取最新評論數
-          const latestReviews = lastDoc.reviews || 0;
-
-          computedBranchStats.push({
-            branch: b,
-            avgC: dailyAvgC,
-            avgS: dailyAvgS,
-            reviews: latestReviews,
-            hasData: bDaysDiff > 0,
-            isFiltered: selectedBranches.includes(b),
-          });
-
-          if (selectedBranches.includes(b)) {
-            baseCurrentC += firstDoc.currentC || 0;
-            baseCurrentS += firstDoc.currentS || 0;
-            baseNextC += firstDoc.nextC || 0;
-            baseNextS += firstDoc.nextS || 0;
-
-            totalCurrentC += lastDoc.currentC || 0;
-            totalCurrentS += lastDoc.currentS || 0;
-            totalNextC += lastDoc.nextC || 0;
-            totalNextS += lastDoc.nextS || 0;
-
-            if (minDay === null || fDay < minDay) minDay = fDay;
-            if (maxDay === null || lDay > maxDay) maxDay = lDay;
-          }
-        } else {
-          computedBranchStats.push({
-            branch: b,
-            avgC: "0.0",
-            avgS: "0.0",
-            reviews: 0,
-            hasData: false,
-            isFiltered: selectedBranches.includes(b),
-          });
+    uniqueDates.forEach((dateStr) => {
+      const currentDayDocs = filtered.filter((d) => d.date === dateStr);
+      currentDayDocs.forEach((d) => {
+        if (d.timestamp > (branchLatest[d.branch]?.timestamp || 0)) {
+          branchLatest[d.branch] = d;
         }
       });
 
-      const daysDiff = maxDay !== null && minDay !== null ? maxDay - minDay : 0;
-      const remainingDays = maxDay !== null ? totalDaysInMonth - maxDay : 0;
-      const progressText =
-        maxDay !== null
-          ? `${maxDay}/${totalDaysInMonth}天`
-          : `0/${totalDaysInMonth}天`;
-
-      let forecastCurrentC = totalCurrentC;
-      let forecastCurrentS = totalCurrentS;
-      let forecastNextC = totalNextC;
-      let forecastNextS = totalNextS;
-
-      if (daysDiff > 0) {
-        forecastCurrentC = Math.round(
-          totalCurrentC +
-            ((totalCurrentC - baseCurrentC) / daysDiff) * remainingDays
-        );
-        forecastCurrentS = Math.round(
-          totalCurrentS +
-            ((totalCurrentS - baseCurrentS) / daysDiff) * remainingDays
-        );
-        forecastNextC = Math.round(
-          totalNextC + ((totalNextC - baseNextC) / daysDiff) * remainingDays
-        );
-        forecastNextS = Math.round(
-          totalNextS + ((totalNextS - baseNextS) / daysDiff) * remainingDays
-        );
-      }
-
-      let latestTs = 0;
-      filtered.forEach((d) => {
-        if (d.timestamp > latestTs) latestTs = d.timestamp;
-      });
-      const latestUpdateStr = latestTs
-        ? new Date(latestTs).toLocaleTimeString()
-        : "無";
-
-      return {
-        chartData: chartDataAggregate,
-        summaryMetrics: {
-          currentC: totalCurrentC,
-          currentS: totalCurrentS,
-          nextC: totalNextC,
-          nextS: totalNextS,
-          foreC: forecastCurrentC,
-          foreS: forecastCurrentS,
-          foreNextC: forecastNextC,
-          foreNextS: forecastNextS,
-          progress: progressText,
-        },
-        branchStats: computedBranchStats,
-        latestUpdateStr,
+      let aggRow = {
+        date: dateStr.slice(5),
+        currentC: 0,
+        currentS: 0,
+        nextC: 0,
+        nextS: 0,
+        reviews: 0,
       };
-    }, [dbData, selectedMonth, selectedBranches]);
+
+      selectedBranches.forEach((b) => {
+        const bData = filtered.filter(
+          (d) => d.date === dateStr && d.branch === b
+        );
+        if (bData.length > 0) {
+          const latestDayDoc = bData.sort(
+            (a, b) => b.timestamp - a.timestamp
+          )[0];
+          branchLatest[b] = latestDayDoc;
+        }
+
+        const activeData = branchLatest[b];
+        if (activeData) {
+          aggRow.currentC += activeData.currentC || 0;
+          aggRow.currentS += activeData.currentS || 0;
+          aggRow.nextC += activeData.nextC || 0;
+          aggRow.nextS += activeData.nextS || 0;
+          aggRow.reviews += activeData.reviews || 0;
+
+          aggRow[`${b}_currentC`] = activeData.currentC || 0;
+          aggRow[`${b}_currentS`] = activeData.currentS || 0;
+          aggRow[`${b}_nextC`] = activeData.nextC || 0;
+          aggRow[`${b}_nextS`] = activeData.nextS || 0;
+          aggRow[`${b}_reviews`] = activeData.reviews || 0;
+        }
+      });
+
+      chartDataAggregate.push(aggRow);
+    });
+
+    let totalCurrentC = 0,
+      totalCurrentS = 0,
+      totalNextC = 0,
+      totalNextS = 0;
+    let baseCurrentC = 0,
+      baseCurrentS = 0,
+      baseNextC = 0,
+      baseNextS = 0;
+    let minDay = null;
+    let maxDay = null;
+    let computedBranchStats = [];
+
+    BRANCHES.forEach((b) => {
+      const bDataAsc = filtered
+        .filter((d) => d.branch === b)
+        .sort((a, b) => {
+          const dayA =
+            a.day || (a.date ? parseInt(a.date.split("-")[2], 10) : 0);
+          const dayB =
+            b.day || (b.date ? parseInt(b.date.split("-")[2], 10) : 0);
+          return dayA - dayB || a.timestamp - b.timestamp;
+        });
+
+      if (bDataAsc.length > 0) {
+        const firstDoc = bDataAsc[0];
+        const lastDoc = bDataAsc[bDataAsc.length - 1];
+
+        const fDay =
+          firstDoc.day ||
+          (firstDoc.date ? parseInt(firstDoc.date.split("-")[2], 10) : 1);
+        const lDay =
+          lastDoc.day ||
+          (lastDoc.date ? parseInt(lastDoc.date.split("-")[2], 10) : 1);
+        const bDaysDiff = lDay - fDay;
+
+        const diffC = (lastDoc.currentC || 0) - (firstDoc.currentC || 0);
+        const diffS = (lastDoc.currentS || 0) - (firstDoc.currentS || 0);
+
+        computedBranchStats.push({
+          branch: b,
+          avgC: bDaysDiff > 0 ? (diffC / bDaysDiff).toFixed(1) : "0.0",
+          avgS: bDaysDiff > 0 ? (diffS / bDaysDiff).toFixed(1) : "0.0",
+          isFiltered: selectedBranches.includes(b),
+        });
+
+        if (selectedBranches.includes(b)) {
+          baseCurrentC += firstDoc.currentC || 0;
+          baseCurrentS += firstDoc.currentS || 0;
+          baseNextC += firstDoc.nextC || 0;
+          baseNextS += firstDoc.nextS || 0;
+
+          totalCurrentC += lastDoc.currentC || 0;
+          totalCurrentS += lastDoc.currentS || 0;
+          totalNextC += lastDoc.nextC || 0;
+          totalNextS += lastDoc.nextS || 0;
+
+          if (minDay === null || fDay < minDay) minDay = fDay;
+          if (maxDay === null || lDay > maxDay) maxDay = lDay;
+        }
+      } else {
+        computedBranchStats.push({
+          branch: b,
+          avgC: "0.0",
+          avgS: "0.0",
+          isFiltered: selectedBranches.includes(b),
+        });
+      }
+    });
+
+    // 💡 調整重點：計算「每日流水帳明細數據」(排除同天重複輸入，只取最新一筆)
+    const dailyMap = {};
+    filtered.forEach((d) => {
+      if (selectedBranches.includes(d.branch)) {
+        const key = `${d.date}_${d.branch}`;
+        if (!dailyMap[key] || d.timestamp > dailyMap[key].timestamp) {
+          dailyMap[key] = d;
+        }
+      }
+    });
+    const computedDailyRecords = Object.values(dailyMap).sort(
+      (a, b) => b.date.localeCompare(a.date) || a.branch.localeCompare(b.branch)
+    );
+
+    const daysDiff = maxDay !== null && minDay !== null ? maxDay - minDay : 0;
+    const remainingDays = maxDay !== null ? totalDaysInMonth - maxDay : 0;
+
+    let forecastCurrentC = totalCurrentC;
+    let forecastCurrentS = totalCurrentS;
+    let forecastNextC = totalNextC;
+    let forecastNextS = totalNextS;
+
+    if (daysDiff > 0) {
+      forecastCurrentC = Math.round(
+        totalCurrentC +
+          ((totalCurrentC - baseCurrentC) / daysDiff) * remainingDays
+      );
+      forecastCurrentS = Math.round(
+        totalCurrentS +
+          ((totalCurrentS - baseCurrentS) / daysDiff) * remainingDays
+      );
+      forecastNextC = Math.round(
+        totalNextC + ((totalNextC - baseNextC) / daysDiff) * remainingDays
+      );
+      forecastNextS = Math.round(
+        totalNextS + ((totalNextS - baseNextS) / daysDiff) * remainingDays
+      );
+    }
+
+    let latestTs = 0;
+    filtered.forEach((d) => {
+      if (d.timestamp > latestTs) latestTs = d.timestamp;
+    });
+    return {
+      chartData: chartDataAggregate,
+      summaryMetrics: {
+        currentC: totalCurrentC,
+        currentS: totalCurrentS,
+        nextC: totalNextC,
+        nextS: totalNextS,
+        foreC: forecastCurrentC,
+        foreS: forecastCurrentS,
+        foreNextC: forecastNextC,
+        foreNextS: forecastNextS,
+        progress:
+          maxDay !== null
+            ? `${maxDay}/${totalDaysInMonth}天`
+            : `0/${totalDaysInMonth}天`,
+      },
+      branchStats: computedBranchStats,
+      dailyRecords: computedDailyRecords,
+      latestUpdateStr: latestTs
+        ? new Date(latestTs).toLocaleTimeString()
+        : "無",
+    };
+  }, [dbData, selectedMonth, selectedBranches]);
 
   const renderChartLines = () => {
     if (viewMode === "aggregate") {
@@ -410,6 +420,34 @@ export default function App() {
     }
   };
 
+  const renderReviewsLines = () => {
+    if (viewMode === "aggregate") {
+      return (
+        <Line
+          type="monotone"
+          dataKey="reviews"
+          name="總評論數(所選分院加總)"
+          stroke="#d97706"
+          strokeWidth={3}
+          dot={{ r: 4 }}
+        />
+      );
+    } else {
+      const colors = ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"];
+      return selectedBranches.map((b, idx) => (
+        <Line
+          key={`${b}_reviews`}
+          type="monotone"
+          dataKey={`${b}_reviews`}
+          name={`${b} 評論數`}
+          stroke={colors[idx % colors.length]}
+          strokeWidth={2}
+          dot={{ r: 3 }}
+        />
+      ));
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 text-slate-800 font-sans">
       <div className="max-w-7xl mx-auto bg-white rounded-2xl shadow-sm p-6 mb-6 border border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -430,6 +468,7 @@ export default function App() {
       </div>
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* 左側輸入表單 */}
         <div className="space-y-6">
           <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-slate-900">
@@ -511,23 +550,19 @@ export default function App() {
                   />
                 </div>
               </div>
-              {/* 💡 新增：口碑指標 (Google 評論) 輸入區塊 */}
               <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 space-y-3">
                 <span className="text-xs font-bold text-amber-700 flex items-center gap-1">
                   <Star className="w-3.5 h-3.5 fill-amber-500" /> 口碑聲量指標
                 </span>
-                <div>
-                  <input
-                    type="number"
-                    name="reviews"
-                    placeholder="目前 Google 評論總則數 (選填)"
-                    value={formData.reviews}
-                    onChange={handleFormChange}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                  />
-                </div>
+                <input
+                  type="number"
+                  name="reviews"
+                  placeholder="目前 Google 評論總則數"
+                  value={formData.reviews}
+                  onChange={handleFormChange}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                />
               </div>
-
               <button
                 type="submit"
                 disabled={uiStatus.loading}
@@ -539,15 +574,12 @@ export default function App() {
                   "儲存今日紀錄"
                 )}
               </button>
-
               {uiStatus.msg && (
                 <div
                   className={`text-xs p-3 rounded-xl border text-center font-medium ${
                     uiStatus.type === "error"
                       ? "border-red-200 text-red-600 bg-red-50"
-                      : uiStatus.type === "success"
-                      ? "border-green-200 text-green-600 bg-green-50"
-                      : "border-blue-200 text-blue-600 bg-blue-50"
+                      : "border-green-200 text-green-600 bg-green-50"
                   }`}
                 >
                   {uiStatus.msg}
@@ -557,6 +589,7 @@ export default function App() {
           </div>
         </div>
 
+        {/* 右側觀測看板 */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-2">
@@ -648,10 +681,71 @@ export default function App() {
             </div>
           </div>
 
+          {/* 💡 滿足需求：進化版「各分院每日歷史數據明細流水平」 */}
+          <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
+            <h3 className="text-sm font-bold text-slate-400 uppercase mb-3 flex items-center gap-1.5">
+              <Table className="w-4 h-4 text-blue-500" /> 各分院每日歷史明細表 (
+              {selectedMonth})
+            </h3>
+            <div className="max-h-80 overflow-y-auto border border-slate-100 rounded-xl">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-semibold sticky top-0 z-10">
+                    <th className="p-2.5 bg-slate-50">觀察日期</th>
+                    <th className="p-2.5 bg-slate-50">分院名稱</th>
+                    <th className="p-2.5 bg-slate-50">本月諮詢</th>
+                    <th className="p-2.5 bg-slate-50">下月預約</th>
+                    <th className="p-2.5 bg-slate-50">本月手術</th>
+                    <th className="p-2.5 bg-slate-50">下月手術</th>
+                    <th className="p-2.5 bg-slate-50">Google評論</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dailyRecords.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan="7"
+                        className="p-4 text-center text-slate-400"
+                      >
+                        當前篩選條件下尚無歷史數據
+                      </td>
+                    </tr>
+                  ) : (
+                    dailyRecords.map((r, idx) => (
+                      <tr
+                        key={`${r.date}_${r.branch}_${idx}`}
+                        className="border-b border-slate-100 hover:bg-slate-50 transition-colors"
+                      >
+                        <td className="p-2.5 text-slate-500 font-medium whitespace-nowrap">
+                          {r.date}
+                        </td>
+                        <td className="p-2.5 font-bold text-slate-900">
+                          {r.branch}
+                        </td>
+                        <td className="p-2.5 font-semibold text-blue-600">
+                          {r.currentC}
+                        </td>
+                        <td className="p-2.5 text-purple-600">{r.nextC}</td>
+                        <td className="p-2.5 font-semibold text-emerald-600">
+                          {r.currentS}
+                        </td>
+                        <td className="p-2.5 text-cyan-600">{r.nextS}</td>
+                        <td className="p-2.5 font-bold text-amber-600">
+                          {r.reviews > 0 ? `${r.reviews} 則` : "--"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* 各分院日增動能速度 */}
           <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100">
             <span className="text-xs font-bold text-slate-400 uppercase block mb-3 flex items-center gap-1">
               <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />{" "}
-              各分院實質日增動能與口碑
+              各分院實質日增動能速度
             </span>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {branchStats.map((s) => (
@@ -679,21 +773,13 @@ export default function App() {
                         +{s.avgS} /天
                       </span>
                     </div>
-                    {/* 💡 新增：顯示最新 Google 評論數 */}
-                    <div className="flex justify-between text-[11px] mt-1.5 pt-1.5 border-t border-slate-200/60">
-                      <span className="text-slate-400 flex items-center gap-0.5">
-                        <Star className="w-3 h-3 text-amber-400" /> 評論數:
-                      </span>
-                      <span className="font-bold text-slate-700">
-                        {s.reviews > 0 ? s.reviews : "--"}
-                      </span>
-                    </div>
                   </div>
                 </div>
               ))}
             </div>
           </div>
 
+          {/* 大落點預估指標 */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
               <div className="bg-blue-600 px-4 py-2 text-white font-semibold text-sm flex justify-between items-center">
@@ -773,11 +859,12 @@ export default function App() {
             </div>
           </div>
 
+          {/* 業績折線圖 */}
           <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
             <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-1.5">
               <BarChart2 className="w-4 h-4" /> 營運累積與動能走勢圖
             </h3>
-            <div className="w-full h-80">
+            <div className="w-full h-72">
               {chartData.length === 0 ? (
                 <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">
                   尚無數據
@@ -809,6 +896,55 @@ export default function App() {
                       iconType="circle"
                     />
                     {renderChartLines()}
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          {/* 口碑聲量折線圖 */}
+          <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
+            <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-1.5">
+              <Star className="w-4 h-4 text-amber-500 fill-amber-500" />{" "}
+              口碑聲量指標（Google 評論總數）走勢圖
+            </h3>
+            <div className="w-full h-72">
+              {chartData.length === 0 ? (
+                <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">
+                  尚無數據
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={chartData}
+                    margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis
+                      dataKey="date"
+                      stroke="#94a3b8"
+                      fontSize={11}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      stroke="#94a3b8"
+                      fontSize={11}
+                      tickLine={false}
+                      domain={["dataMin - 5", "dataMax + 5"]}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        borderRadius: "12px",
+                        border: "none",
+                        boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+                        fontSize: "12px",
+                      }}
+                    />
+                    <Legend
+                      wrapperStyle={{ paddingTop: "20px", fontSize: "12px" }}
+                      iconType="circle"
+                    />
+                    {renderReviewsLines()}
                   </LineChart>
                 </ResponsiveContainer>
               )}
