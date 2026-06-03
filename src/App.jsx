@@ -155,7 +155,6 @@ export default function App() {
         currentS: "",
         nextC: "",
         nextS: "",
-        reviews: "",
       }));
       setTimeout(
         () => setUiStatus({ loading: false, msg: "", type: "" }),
@@ -170,7 +169,6 @@ export default function App() {
     }
   };
 
-  // 💡 核心運算：篩選、加總、預估、與分支指標
   const {
     chartData,
     summaryMetrics,
@@ -202,13 +200,6 @@ export default function App() {
     });
 
     uniqueDates.forEach((dateStr) => {
-      const currentDayDocs = filtered.filter((d) => d.date === dateStr);
-      currentDayDocs.forEach((d) => {
-        if (d.timestamp > (branchLatest[d.branch]?.timestamp || 0)) {
-          branchLatest[d.branch] = d;
-        }
-      });
-
       let aggRow = {
         date: dateStr.slice(5),
         currentC: 0,
@@ -218,7 +209,7 @@ export default function App() {
         reviews: 0,
       };
 
-      selectedBranches.forEach((b) => {
+      BRANCHES.forEach((b) => {
         const bData = filtered.filter(
           (d) => d.date === dateStr && d.branch === b
         );
@@ -230,13 +221,14 @@ export default function App() {
         }
 
         const activeData = branchLatest[b];
-        if (activeData) {
+        if (activeData && selectedBranches.includes(b)) {
           aggRow.currentC += activeData.currentC || 0;
           aggRow.currentS += activeData.currentS || 0;
           aggRow.nextC += activeData.nextC || 0;
           aggRow.nextS += activeData.nextS || 0;
           aggRow.reviews += activeData.reviews || 0;
 
+          // 儲存分支數據供對比模式使用
           aggRow[`${b}_currentC`] = activeData.currentC || 0;
           aggRow[`${b}_currentS`] = activeData.currentS || 0;
           aggRow[`${b}_nextC`] = activeData.nextC || 0;
@@ -244,7 +236,6 @@ export default function App() {
           aggRow[`${b}_reviews`] = activeData.reviews || 0;
         }
       });
-
       chartDataAggregate.push(aggRow);
     });
 
@@ -274,7 +265,6 @@ export default function App() {
       if (bDataAsc.length > 0) {
         const firstDoc = bDataAsc[0];
         const lastDoc = bDataAsc[bDataAsc.length - 1];
-
         const fDay =
           firstDoc.day ||
           (firstDoc.date ? parseInt(firstDoc.date.split("-")[2], 10) : 1);
@@ -283,13 +273,21 @@ export default function App() {
           (lastDoc.date ? parseInt(lastDoc.date.split("-")[2], 10) : 1);
         const bDaysDiff = lDay - fDay;
 
-        const diffC = (lastDoc.currentC || 0) - (firstDoc.currentC || 0);
-        const diffS = (lastDoc.currentS || 0) - (firstDoc.currentS || 0);
-
         computedBranchStats.push({
           branch: b,
-          avgC: bDaysDiff > 0 ? (diffC / bDaysDiff).toFixed(1) : "0.0",
-          avgS: bDaysDiff > 0 ? (diffS / bDaysDiff).toFixed(1) : "0.0",
+          avgC:
+            bDaysDiff > 0
+              ? ((lastDoc.currentC - firstDoc.currentC) / bDaysDiff).toFixed(1)
+              : "0.0",
+          avgS:
+            bDaysDiff > 0
+              ? ((lastDoc.currentS - firstDoc.currentS) / bDaysDiff).toFixed(1)
+              : "0.0",
+          currentC: lastDoc.currentC || 0,
+          nextC: lastDoc.nextC || 0,
+          currentS: lastDoc.currentS || 0,
+          nextS: lastDoc.nextS || 0,
+          reviews: lastDoc.reviews || 0,
           isFiltered: selectedBranches.includes(b),
         });
 
@@ -298,12 +296,10 @@ export default function App() {
           baseCurrentS += firstDoc.currentS || 0;
           baseNextC += firstDoc.nextC || 0;
           baseNextS += firstDoc.nextS || 0;
-
           totalCurrentC += lastDoc.currentC || 0;
           totalCurrentS += lastDoc.currentS || 0;
           totalNextC += lastDoc.nextC || 0;
           totalNextS += lastDoc.nextS || 0;
-
           if (minDay === null || fDay < minDay) minDay = fDay;
           if (maxDay === null || lDay > maxDay) maxDay = lDay;
         }
@@ -312,19 +308,22 @@ export default function App() {
           branch: b,
           avgC: "0.0",
           avgS: "0.0",
+          currentC: 0,
+          nextC: 0,
+          currentS: 0,
+          nextS: 0,
+          reviews: 0,
           isFiltered: selectedBranches.includes(b),
         });
       }
     });
 
-    // 💡 調整重點：計算「每日流水帳明細數據」(排除同天重複輸入，只取最新一筆)
     const dailyMap = {};
     filtered.forEach((d) => {
       if (selectedBranches.includes(d.branch)) {
         const key = `${d.date}_${d.branch}`;
-        if (!dailyMap[key] || d.timestamp > dailyMap[key].timestamp) {
+        if (!dailyMap[key] || d.timestamp > dailyMap[key].timestamp)
           dailyMap[key] = d;
-        }
       }
     });
     const computedDailyRecords = Object.values(dailyMap).sort(
@@ -334,24 +333,23 @@ export default function App() {
     const daysDiff = maxDay !== null && minDay !== null ? maxDay - minDay : 0;
     const remainingDays = maxDay !== null ? totalDaysInMonth - maxDay : 0;
 
-    let forecastCurrentC = totalCurrentC;
-    let forecastCurrentS = totalCurrentS;
-    let forecastNextC = totalNextC;
-    let forecastNextS = totalNextS;
-
+    let fcC = totalCurrentC,
+      fcS = totalCurrentS,
+      fcNC = totalNextC,
+      fcNS = totalNextS;
     if (daysDiff > 0) {
-      forecastCurrentC = Math.round(
+      fcC = Math.round(
         totalCurrentC +
           ((totalCurrentC - baseCurrentC) / daysDiff) * remainingDays
       );
-      forecastCurrentS = Math.round(
+      fcS = Math.round(
         totalCurrentS +
           ((totalCurrentS - baseCurrentS) / daysDiff) * remainingDays
       );
-      forecastNextC = Math.round(
+      fcNC = Math.round(
         totalNextC + ((totalNextC - baseNextC) / daysDiff) * remainingDays
       );
-      forecastNextS = Math.round(
+      fcNS = Math.round(
         totalNextS + ((totalNextS - baseNextS) / daysDiff) * remainingDays
       );
     }
@@ -367,10 +365,10 @@ export default function App() {
         currentS: totalCurrentS,
         nextC: totalNextC,
         nextS: totalNextS,
-        foreC: forecastCurrentC,
-        foreS: forecastCurrentS,
-        foreNextC: forecastNextC,
-        foreNextS: forecastNextS,
+        foreC: fcC,
+        foreS: fcS,
+        foreNextC: fcNC,
+        foreNextS: fcNS,
         progress:
           maxDay !== null
             ? `${maxDay}/${totalDaysInMonth}天`
@@ -420,13 +418,14 @@ export default function App() {
     }
   };
 
+  // 💡 升級版：口碑聲量曲線渲染 (支援加總與分院對比)
   const renderReviewsLines = () => {
     if (viewMode === "aggregate") {
       return (
         <Line
           type="monotone"
           dataKey="reviews"
-          name="總評論數(所選分院加總)"
+          name="總評論數 (所選分院加總)"
           stroke="#d97706"
           strokeWidth={3}
           dot={{ r: 4 }}
@@ -468,7 +467,6 @@ export default function App() {
       </div>
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 左側輸入表單 */}
         <div className="space-y-6">
           <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-slate-900">
@@ -579,7 +577,9 @@ export default function App() {
                   className={`text-xs p-3 rounded-xl border text-center font-medium ${
                     uiStatus.type === "error"
                       ? "border-red-200 text-red-600 bg-red-50"
-                      : "border-green-200 text-green-600 bg-green-50"
+                      : uiStatus.type === "success"
+                      ? "border-green-200 text-green-600 bg-green-50"
+                      : "border-blue-200 text-blue-600 bg-blue-50"
                   }`}
                 >
                   {uiStatus.msg}
@@ -589,7 +589,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* 右側觀測看板 */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-2">
@@ -681,7 +680,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* 💡 滿足需求：進化版「各分院每日歷史數據明細流水平」 */}
           <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
             <h3 className="text-sm font-bold text-slate-400 uppercase mb-3 flex items-center gap-1.5">
               <Table className="w-4 h-4 text-blue-500" /> 各分院每日歷史明細表 (
@@ -707,7 +705,7 @@ export default function App() {
                         colSpan="7"
                         className="p-4 text-center text-slate-400"
                       >
-                        當前篩選條件下尚無歷史數據
+                        尚無數據
                       </td>
                     </tr>
                   ) : (
@@ -741,7 +739,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* 各分院日增動能速度 */}
           <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100">
             <span className="text-xs font-bold text-slate-400 uppercase block mb-3 flex items-center gap-1">
               <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />{" "}
@@ -779,7 +776,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* 大落點預估指標 */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
               <div className="bg-blue-600 px-4 py-2 text-white font-semibold text-sm flex justify-between items-center">
@@ -859,7 +855,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* 業績折線圖 */}
           <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
             <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-1.5">
               <BarChart2 className="w-4 h-4" /> 營運累積與動能走勢圖
@@ -902,7 +897,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* 口碑聲量折線圖 */}
           <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
             <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-1.5">
               <Star className="w-4 h-4 text-amber-500 fill-amber-500" />{" "}
@@ -930,7 +924,7 @@ export default function App() {
                       stroke="#94a3b8"
                       fontSize={11}
                       tickLine={false}
-                      domain={["dataMin - 5", "dataMax + 5"]}
+                      domain={["auto", "auto"]}
                     />
                     <Tooltip
                       contentStyle={{
