@@ -6,8 +6,6 @@ import {
   doc,
   setDoc,
   onSnapshot,
-  query,
-  orderBy,
 } from "firebase/firestore";
 import {
   LineChart,
@@ -21,7 +19,6 @@ import {
   BarChart,
   Bar,
   ComposedChart,
-  Area,
 } from "recharts";
 import {
   Calendar,
@@ -35,10 +32,7 @@ import {
   Zap,
   Star,
   Table,
-  Settings,
   Database,
-  ArrowUpRight,
-  DollarSign,
   Target,
 } from "lucide-react";
 
@@ -61,14 +55,19 @@ const YEARS = Array.from({ length: 10 }, (_, i) => (2017 + i).toString());
 const MONTHS = Array.from({ length: 12 }, (_, i) =>
   (i + 1).toString().padStart(2, "0")
 );
+const METRICS = [
+  { key: "currentC", label: "本月諮詢", color: "#2563eb" },
+  { key: "nextC", label: "下月諮詢", color: "#7c3aed" },
+  { key: "currentS", label: "本月手術", color: "#16a34a" },
+  { key: "nextS", label: "下月手術", color: "#06b6d4" },
+];
 
 // --- 2. 主程式組件 ---
 export default function App() {
-  const [activeTab, setActiveTab] = useState("daily"); // daily, strategy, maintenance
-  const [dbData, setDbData] = useState([]); // 每日數據 (wishvision_stats)
-  const [historyData, setHistoryData] = useState([]); // 月度歷史 (wishvision_monthly_history)
+  const [activeTab, setActiveTab] = useState("daily");
+  const [dbData, setDbData] = useState([]);
+  const [historyData, setHistoryData] = useState([]);
 
-  // 表單狀態
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split("T")[0],
     branch: BRANCHES[0],
@@ -79,14 +78,18 @@ export default function App() {
     reviews: "",
   });
 
-  // 篩選狀態
   const [selectedMonth, setSelectedMonth] = useState(
     new Date().toISOString().slice(0, 7)
   );
   const [selectedBranches, setSelectedBranches] = useState(BRANCHES);
+  const [selectedMetrics, setSelectedMetrics] = useState([
+    "currentC",
+    "nextC",
+    "currentS",
+    "nextS",
+  ]);
   const [viewMode, setViewMode] = useState("aggregate");
 
-  // 歷史維護狀態
   const [maintYear, setMaintYear] = useState(
     new Date().getFullYear().toString()
   );
@@ -119,7 +122,16 @@ export default function App() {
     };
   }, []);
 
-  // --- 4. 每日動能計算大腦 (避震演算法) ---
+  const handleMetricToggle = (metricKey) => {
+    if (selectedMetrics.includes(metricKey)) {
+      if (selectedMetrics.length > 1)
+        setSelectedMetrics(selectedMetrics.filter((m) => m !== metricKey));
+    } else {
+      setSelectedMetrics([...selectedMetrics, metricKey]);
+    }
+  };
+
+  // --- 4. 每日動能計算大腦 (保留最強避震演算法) ---
   const dailyMetrics = useMemo(() => {
     const currentMonthDocs = dbData.filter(
       (d) => (d.month || d.date.slice(0, 7)) === selectedMonth
@@ -144,7 +156,6 @@ export default function App() {
         if (selectedBranches.includes(b) && day > maxDayObserved)
           maxDayObserved = day;
 
-        // 💡 鐵律 1: 動態尋底
         const minC = Math.min(...bDocs.map((d) => d.currentC || 0));
         const minS = Math.min(...bDocs.map((d) => d.currentS || 0));
 
@@ -152,7 +163,6 @@ export default function App() {
         const curS = last.currentS || 0;
         const rem = totalDays - day;
 
-        // 💡 鐵律 2: 全期攤提
         let avgC = 0,
           foreC = curC;
         if (curC > minC && day > 0) {
@@ -199,12 +209,70 @@ export default function App() {
       }
     });
 
-    const dailyLogs = currentMonthDocs
-      .filter((d) => selectedBranches.includes(d.branch))
-      .sort(
-        (a, b) =>
-          b.date.localeCompare(a.date) || a.branch.localeCompare(b.branch)
-      );
+    const dailyLogsMap = {};
+    currentMonthDocs.forEach((d) => {
+      if (selectedBranches.includes(d.branch)) {
+        const k = `${d.date}_${d.branch}`;
+        if (!dailyLogsMap[k] || d.timestamp > dailyLogsMap[k].timestamp)
+          dailyLogsMap[k] = d;
+      }
+    });
+    const dailyLogs = Object.values(dailyLogsMap).sort(
+      (a, b) => b.date.localeCompare(a.date) || a.branch.localeCompare(b.branch)
+    );
+
+    // 💡 補回圖表繪製所需的 chartData
+    const uniqueDates = Array.from(
+      new Set(currentMonthDocs.map((d) => d.date))
+    ).sort();
+    let chartDataAggregate = [];
+    let branchLatestChart = {};
+    BRANCHES.forEach(
+      (b) =>
+        (branchLatestChart[b] = {
+          currentC: 0,
+          currentS: 0,
+          nextC: 0,
+          nextS: 0,
+          reviews: 0,
+        })
+    );
+
+    uniqueDates.forEach((dateStr) => {
+      let aggRow = {
+        date: dateStr.slice(5),
+        currentC: 0,
+        currentS: 0,
+        nextC: 0,
+        nextS: 0,
+        reviews: 0,
+      };
+      BRANCHES.forEach((b) => {
+        const bData = currentMonthDocs.filter(
+          (d) => d.date === dateStr && d.branch === b
+        );
+        if (bData.length > 0)
+          branchLatestChart[b] = bData.sort(
+            (a, b) => b.timestamp - a.timestamp
+          )[0];
+
+        const activeData = branchLatestChart[b];
+        if (activeData && selectedBranches.includes(b)) {
+          aggRow.currentC += activeData.currentC || 0;
+          aggRow.currentS += activeData.currentS || 0;
+          aggRow.nextC += activeData.nextC || 0;
+          aggRow.nextS += activeData.nextS || 0;
+          aggRow.reviews += activeData.reviews || 0;
+
+          aggRow[`${b}_currentC`] = activeData.currentC || 0;
+          aggRow[`${b}_currentS`] = activeData.currentS || 0;
+          aggRow[`${b}_nextC`] = activeData.nextC || 0;
+          aggRow[`${b}_nextS`] = activeData.nextS || 0;
+          aggRow[`${b}_reviews`] = activeData.reviews || 0;
+        }
+      });
+      chartDataAggregate.push(aggRow);
+    });
 
     return {
       branchSummary,
@@ -215,12 +283,12 @@ export default function App() {
       maxDayObserved,
       totalDays,
       dailyLogs,
+      chartData: chartDataAggregate,
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
-  // --- 5. 戰略看板計算大腦 ---
+  // --- 5. 戰略看板計算大腦 (原封不動) ---
   const strategyData = useMemo(() => {
-    // 整理歷史數據
     const historyMapped = historyData.map((d) => {
       const surgery = d.surgery || 0;
       const revenue = d.revenue || 0;
@@ -232,7 +300,6 @@ export default function App() {
       };
     });
 
-    // 依年份加總 (年度趨勢)
     const yearlyTrend = YEARS.map((y) => {
       const yearDocs = historyMapped.filter(
         (d) =>
@@ -250,18 +317,16 @@ export default function App() {
       };
     });
 
-    // 依月份加總 (YoY 趨勢)
     const monthlyYoY = MONTHS.map((m) => {
       const row = { name: `${m}月` };
       YEARS.slice(-3).forEach((y) => {
-        // 只取最近三年對比
         const doc = historyMapped.find(
           (d) =>
             d.year === y &&
             d.month === m &&
             (viewMode === "aggregate" ? true : d.branch === maintBranch)
         );
-        row[`val_${y}`] = doc ? doc.revenue : 0; // 預設看營收，可擴展
+        row[`val_${y}`] = doc ? doc.revenue : 0;
       });
       return row;
     });
@@ -319,6 +384,71 @@ export default function App() {
       alert(`${m}月 數據已更新`);
     } catch (err) {
       alert("儲存失敗: " + err.message);
+    }
+  };
+
+  // --- 補回：圖表渲染函數 ---
+  const renderDailyChartLines = () => {
+    if (viewMode === "aggregate") {
+      return METRICS.filter((m) => selectedMetrics.includes(m.key)).map((m) => (
+        <Line
+          key={m.key}
+          type="monotone"
+          dataKey={m.key}
+          name={m.label}
+          stroke={m.color}
+          strokeWidth={m.key.startsWith("current") ? 3 : 2}
+          strokeDasharray={m.key.startsWith("next") ? "5 5" : "0"}
+          dot={{ r: 4 }}
+        />
+      ));
+    } else {
+      let lines = [];
+      const colors = ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"];
+      selectedBranches.forEach((b, idx) => {
+        METRICS.filter((m) => selectedMetrics.includes(m.key)).forEach((m) => {
+          lines.push(
+            <Line
+              key={`${b}_${m.key}`}
+              type="monotone"
+              dataKey={`${b}_${m.key}`}
+              name={`${b} ${m.label}`}
+              stroke={colors[idx % colors.length]}
+              strokeWidth={2}
+              strokeDasharray={m.key.startsWith("next") ? "3 3" : "0"}
+            />
+          );
+        });
+      });
+      return lines;
+    }
+  };
+
+  const renderDailyReviewsLines = () => {
+    if (viewMode === "aggregate") {
+      return (
+        <Line
+          type="monotone"
+          dataKey="reviews"
+          name="總評論數(所選分院加總)"
+          stroke="#d97706"
+          strokeWidth={3}
+          dot={{ r: 4 }}
+        />
+      );
+    } else {
+      const colors = ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"];
+      return selectedBranches.map((b, idx) => (
+        <Line
+          key={`${b}_reviews`}
+          type="monotone"
+          dataKey={`${b}_reviews`}
+          name={`${b} 評論數`}
+          stroke={colors[idx % colors.length]}
+          strokeWidth={2}
+          dot={{ r: 3 }}
+        />
+      ));
     }
   };
 
@@ -460,14 +590,38 @@ export default function App() {
 
             {/* 右側觀測看板 */}
             <div className="lg:col-span-2 space-y-6">
-              {/* 控制列 */}
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex justify-between items-center">
-                <input
-                  type="month"
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold"
-                />
+              {/* 控制列 (已補回：合併加總 / 分院對比切換鈕) */}
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-wrap justify-between items-center gap-4">
+                <div className="flex gap-4 items-center">
+                  <input
+                    type="month"
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(e.target.value)}
+                    className="bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold"
+                  />
+                  <div className="bg-slate-100 p-1 rounded-xl flex gap-1 text-xs font-bold">
+                    <button
+                      onClick={() => setViewMode("aggregate")}
+                      className={`px-3 py-1.5 rounded-lg transition-all ${
+                        viewMode === "aggregate"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      合併加總
+                    </button>
+                    <button
+                      onClick={() => setViewMode("compare")}
+                      className={`px-3 py-1.5 rounded-lg transition-all ${
+                        viewMode === "compare"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      分院對比
+                    </button>
+                  </div>
+                </div>
                 <div className="flex gap-2">
                   {BRANCHES.map((b) => (
                     <button
@@ -479,19 +633,90 @@ export default function App() {
                           );
                         else setSelectedBranches([...selectedBranches, b]);
                       }}
-                      className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all ${
+                      className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 ${
                         selectedBranches.includes(b)
                           ? "bg-slate-900 border-slate-900 text-white"
                           : "bg-white text-slate-400"
                       }`}
                     >
+                      {selectedBranches.includes(b) && (
+                        <CheckCircle className="w-3 h-3 text-green-400" />
+                      )}{" "}
                       {b}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* 預估指標卡片 */}
+              {/* 指標篩選器 (已補回) */}
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                <span className="text-xs font-bold text-slate-400 uppercase block mb-2 flex items-center gap-1">
+                  <Activity className="w-3.5 h-3.5" /> 圖表指標
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {METRICS.map((m) => (
+                    <button
+                      key={m.key}
+                      onClick={() => handleMetricToggle(m.key)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1 ${
+                        selectedMetrics.includes(m.key)
+                          ? "text-white"
+                          : "bg-white text-slate-400"
+                      }`}
+                      style={
+                        selectedMetrics.includes(m.key)
+                          ? { backgroundColor: m.color, borderColor: m.color }
+                          : {}
+                      }
+                    >
+                      {selectedMetrics.includes(m.key) && (
+                        <CheckCircle className="w-3 h-3 text-white" />
+                      )}{" "}
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 實質日增動能速度卡片 (已補回) */}
+              <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block mb-3 flex items-center gap-1">
+                  <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />{" "}
+                  各分院實質日增動能速度
+                </span>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {dailyMetrics.branchSummary.map((s) => (
+                    <div
+                      key={s.branch}
+                      className={`p-3 rounded-xl border transition-all ${
+                        s.isFiltered
+                          ? "bg-slate-50/80 border-slate-200"
+                          : "bg-white border-slate-100 opacity-40"
+                      }`}
+                    >
+                      <p className="text-xs font-bold text-slate-700 truncate">
+                        {s.branch}
+                      </p>
+                      <div className="mt-2 space-y-1">
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-slate-400">諮詢日增:</span>
+                          <span className="font-bold text-blue-600">
+                            +{s.avgC} /天
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-slate-400">手術日增:</span>
+                          <span className="font-bold text-emerald-600">
+                            +{s.avgS} /天
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 預估落點卡片 (避震演算法驅動) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-gradient-to-br from-blue-600 to-blue-700 p-6 rounded-3xl text-white shadow-xl">
                   <div className="flex justify-between items-start">
@@ -532,6 +757,109 @@ export default function App() {
                       進度: {dailyMetrics.maxDayObserved}天
                     </div>
                   </div>
+                </div>
+              </div>
+
+              {/* 主折線圖 (已補回) */}
+              <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
+                <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-1.5">
+                  <BarChart2 className="w-4 h-4 text-blue-500" />{" "}
+                  營運累積與動能走勢圖
+                </h3>
+                <div className="w-full h-72">
+                  {dailyMetrics.chartData.length === 0 ? (
+                    <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">
+                      尚無數據
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={dailyMetrics.chartData}
+                        margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis
+                          dataKey="date"
+                          stroke="#94a3b8"
+                          fontSize={11}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          stroke="#94a3b8"
+                          fontSize={11}
+                          tickLine={false}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            borderRadius: "12px",
+                            border: "none",
+                            boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+                            fontSize: "12px",
+                          }}
+                        />
+                        <Legend
+                          wrapperStyle={{
+                            paddingTop: "20px",
+                            fontSize: "12px",
+                          }}
+                          iconType="circle"
+                        />
+                        {renderDailyChartLines()}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              {/* 口碑聲量折線圖 (已補回) */}
+              <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
+                <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-1.5">
+                  <Star className="w-4 h-4 text-amber-500 fill-amber-500" />{" "}
+                  口碑聲量指標（Google 評論總數）走勢圖
+                </h3>
+                <div className="w-full h-72">
+                  {dailyMetrics.chartData.length === 0 ? (
+                    <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">
+                      尚無數據
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={dailyMetrics.chartData}
+                        margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis
+                          dataKey="date"
+                          stroke="#94a3b8"
+                          fontSize={11}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          stroke="#94a3b8"
+                          fontSize={11}
+                          tickLine={false}
+                          domain={["auto", "auto"]}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            borderRadius: "12px",
+                            border: "none",
+                            boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+                            fontSize: "12px",
+                          }}
+                        />
+                        <Legend
+                          wrapperStyle={{
+                            paddingTop: "20px",
+                            fontSize: "12px",
+                          }}
+                          iconType="circle"
+                        />
+                        {renderDailyReviewsLines()}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
               </div>
 
