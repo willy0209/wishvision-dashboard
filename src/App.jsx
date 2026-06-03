@@ -19,6 +19,7 @@ import {
   BarChart,
   Bar,
   ComposedChart,
+  Area,
 } from "recharts";
 import {
   Calendar,
@@ -34,6 +35,10 @@ import {
   Table,
   Database,
   Target,
+  ArrowUpRight,
+  DollarSign,
+  Percent,
+  TrendingDown,
 } from "lucide-react";
 
 // --- 1. 配置與初始化 ---
@@ -62,12 +67,19 @@ const METRICS = [
   { key: "nextS", label: "下月手術", color: "#06b6d4" },
 ];
 
-// --- 2. 主程式組件 ---
+// 輔助函數：計算 YoY
+const calcYoY = (cur, prev) => {
+  if (!prev || prev === 0) return "--";
+  const change = ((cur - prev) / prev) * 100;
+  return change.toFixed(1) + "%";
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState("daily");
   const [dbData, setDbData] = useState([]);
   const [historyData, setHistoryData] = useState([]);
 
+  // 每日數據狀態
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split("T")[0],
     branch: BRANCHES[0],
@@ -77,7 +89,6 @@ export default function App() {
     nextS: "",
     reviews: "",
   });
-
   const [selectedMonth, setSelectedMonth] = useState(
     new Date().toISOString().slice(0, 7)
   );
@@ -88,8 +99,18 @@ export default function App() {
     "currentS",
     "nextS",
   ]);
-  const [viewMode, setViewMode] = useState("aggregate");
+  const [dailyViewMode, setDailyViewMode] = useState("aggregate"); // 每日看板模式
 
+  // 戰略看板狀態
+  const [stratMetric, setStratMetric] = useState("revenue"); // 營收, 諮詢, 手術, 轉換, 成功率
+  const [stratBaseYear, setStratBaseYear] = useState(
+    new Date().getFullYear().toString()
+  );
+  const [stratView, setStratView] = useState("macro_A"); // macro_A, macro_B
+  const [stratBranch, setStratBranch] = useState(BRANCHES[0]);
+  const [stratFilterMode, setStratFilterMode] = useState("aggregate"); // aggregate, compare
+
+  // 維護矩陣狀態
   const [maintYear, setMaintYear] = useState(
     new Date().getFullYear().toString()
   );
@@ -102,7 +123,7 @@ export default function App() {
     type: "",
   });
 
-  // --- 3. 數據監聽 ---
+  // --- 數據監聽 ---
   useEffect(() => {
     const unsubDaily = onSnapshot(
       collection(db, "wishvision_stats"),
@@ -122,16 +143,7 @@ export default function App() {
     };
   }, []);
 
-  const handleMetricToggle = (metricKey) => {
-    if (selectedMetrics.includes(metricKey)) {
-      if (selectedMetrics.length > 1)
-        setSelectedMetrics(selectedMetrics.filter((m) => m !== metricKey));
-    } else {
-      setSelectedMetrics([...selectedMetrics, metricKey]);
-    }
-  };
-
-  // --- 4. 每日動能計算大腦 (保留最強避震演算法) ---
+  // --- 每日動能計算 (避震演算法) ---
   const dailyMetrics = useMemo(() => {
     const currentMonthDocs = dbData.filter(
       (d) => (d.month || d.date.slice(0, 7)) === selectedMonth
@@ -155,14 +167,11 @@ export default function App() {
         const day = last.day || parseInt(last.date.split("-")[2], 10);
         if (selectedBranches.includes(b) && day > maxDayObserved)
           maxDayObserved = day;
-
         const minC = Math.min(...bDocs.map((d) => d.currentC || 0));
         const minS = Math.min(...bDocs.map((d) => d.currentS || 0));
-
         const curC = last.currentC || 0;
         const curS = last.currentS || 0;
         const rem = totalDays - day;
-
         let avgC = 0,
           foreC = curC;
         if (curC > minC && day > 0) {
@@ -175,7 +184,6 @@ export default function App() {
           avgS = (curS - minS) / day;
           foreS = Math.round(curS + avgS * rem);
         }
-
         branchSummary.push({
           branch: b,
           curC,
@@ -187,7 +195,6 @@ export default function App() {
           reviews: last.reviews || 0,
           isFiltered: selectedBranches.includes(b),
         });
-
         if (selectedBranches.includes(b)) {
           totalCurC += curC;
           totalCurS += curS;
@@ -221,7 +228,6 @@ export default function App() {
       (a, b) => b.date.localeCompare(a.date) || a.branch.localeCompare(b.branch)
     );
 
-    // 💡 補回圖表繪製所需的 chartData
     const uniqueDates = Array.from(
       new Set(currentMonthDocs.map((d) => d.date))
     ).sort();
@@ -237,7 +243,6 @@ export default function App() {
           reviews: 0,
         })
     );
-
     uniqueDates.forEach((dateStr) => {
       let aggRow = {
         date: dateStr.slice(5),
@@ -255,7 +260,6 @@ export default function App() {
           branchLatestChart[b] = bData.sort(
             (a, b) => b.timestamp - a.timestamp
           )[0];
-
         const activeData = branchLatestChart[b];
         if (activeData && selectedBranches.includes(b)) {
           aggRow.currentC += activeData.currentC || 0;
@@ -263,7 +267,6 @@ export default function App() {
           aggRow.nextC += activeData.nextC || 0;
           aggRow.nextS += activeData.nextS || 0;
           aggRow.reviews += activeData.reviews || 0;
-
           aggRow[`${b}_currentC`] = activeData.currentC || 0;
           aggRow[`${b}_currentS`] = activeData.currentS || 0;
           aggRow[`${b}_nextC`] = activeData.nextC || 0;
@@ -273,7 +276,6 @@ export default function App() {
       });
       chartDataAggregate.push(aggRow);
     });
-
     return {
       branchSummary,
       totalCurC,
@@ -287,52 +289,109 @@ export default function App() {
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
-  // --- 5. 戰略看板計算大腦 (原封不動) ---
+  // --- 5. 戰略看板數據矩陣 (大局 BI 邏輯) ---
   const strategyData = useMemo(() => {
-    const historyMapped = historyData.map((d) => {
-      const surgery = d.surgery || 0;
-      const revenue = d.revenue || 0;
-      return {
-        ...d,
-        asp: surgery > 0 ? Math.round(revenue / surgery) : 0,
-        conv: d.conversion || 0,
-        succ: d.successRate || 0,
-      };
-    });
+    const processedHistory = historyData.map((d) => ({
+      ...d,
+      revenue: parseFloat(d.revenue || 0),
+      consultation: parseInt(d.consultation || 0),
+      surgery: parseInt(d.surgery || 0),
+      conv: parseFloat(d.conversion || 0),
+      succ: parseFloat(d.successRate || 0),
+      asp: d.surgery > 0 ? Math.round(d.revenue / d.surgery) : 0,
+    }));
 
-    const yearlyTrend = YEARS.map((y) => {
-      const yearDocs = historyMapped.filter(
+    // 1. 年度趨勢 (圖表一)
+    const yearlyTrend = YEARS.map((y, idx) => {
+      const yearDocs = processedHistory.filter(
         (d) =>
           d.year === y &&
-          (viewMode === "aggregate" ? true : d.branch === maintBranch)
+          (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
       );
+      const curRev = yearDocs.reduce((acc, cur) => acc + cur.revenue, 0);
+      const curSur = yearDocs.reduce((acc, cur) => acc + cur.surgery, 0);
+      const curCon = yearDocs.reduce((acc, cur) => acc + cur.consultation, 0);
+      const avgConv =
+        yearDocs.length > 0
+          ? (
+              yearDocs.reduce((acc, cur) => acc + cur.conv, 0) / yearDocs.length
+            ).toFixed(1)
+          : 0;
+      const avgSucc =
+        yearDocs.length > 0
+          ? (
+              yearDocs.reduce((acc, cur) => acc + cur.succ, 0) / yearDocs.length
+            ).toFixed(1)
+          : 0;
+
+      // 計算年度 YoY
+      const prevYear = (parseInt(y) - 1).toString();
+      const prevDocs = processedHistory.filter(
+        (d) =>
+          d.year === prevYear &&
+          (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
+      );
+      const prevRev = prevDocs.reduce((acc, cur) => acc + cur.revenue, 0);
+      const prevSur = prevDocs.reduce((acc, cur) => acc + cur.surgery, 0);
+      const prevCon = prevDocs.reduce((acc, cur) => acc + cur.consultation, 0);
+
       return {
         name: y,
-        consultation: yearDocs.reduce(
-          (acc, cur) => acc + (cur.consultation || 0),
-          0
-        ),
-        surgery: yearDocs.reduce((acc, cur) => acc + (cur.surgery || 0), 0),
-        revenue: yearDocs.reduce((acc, cur) => acc + (cur.revenue || 0), 0),
+        revenue: curRev,
+        surgery: curSur,
+        consultation: curCon,
+        conv: avgConv,
+        succ: avgSucc,
+        asp: curSur > 0 ? Math.round(curRev / curSur) : 0,
+        yoyRev: calcYoY(curRev, prevRev),
+        yoySur: calcYoY(curSur, prevSur),
+        yoyCon: calcYoY(curCon, prevCon),
       };
     });
 
+    // 2. 月度 YoY 對比 (圖表二)
+    const prevYear = (parseInt(stratBaseYear) - 1).toString();
     const monthlyYoY = MONTHS.map((m) => {
-      const row = { name: `${m}月` };
-      YEARS.slice(-3).forEach((y) => {
-        const doc = historyMapped.find(
+      const cur =
+        processedHistory.find(
           (d) =>
-            d.year === y &&
+            d.year === stratBaseYear &&
             d.month === m &&
-            (viewMode === "aggregate" ? true : d.branch === maintBranch)
-        );
-        row[`val_${y}`] = doc ? doc.revenue : 0;
-      });
-      return row;
+            (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
+        ) || {};
+      const prev =
+        processedHistory.find(
+          (d) =>
+            d.year === prevYear &&
+            d.month === m &&
+            (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
+        ) || {};
+
+      const getVal = (obj, key) => {
+        if (key === "revenue") return obj.revenue || 0;
+        if (key === "consultation") return obj.consultation || 0;
+        if (key === "surgery") return obj.surgery || 0;
+        if (key === "conversion") return obj.conv || 0;
+        if (key === "success") return obj.succ || 0;
+        return 0;
+      };
+
+      const cV = getVal(cur, stratMetric);
+      const pV = getVal(prev, stratMetric);
+
+      return {
+        name: `${m}月`,
+        baseVal: cV,
+        prevVal: pV,
+        yoy: calcYoY(cV, pV),
+        // 額外儲存完整數據供表格使用
+        curData: cur,
+        prevData: prev,
+      };
     });
 
-    return { yearlyTrend, monthlyYoY, historyMapped };
-  }, [historyData, viewMode, maintBranch]);
+    return { yearlyTrend, monthlyYoY, processedHistory };
+  }, [historyData, stratFilterMode, stratBranch, stratBaseYear, stratMetric]);
 
   // --- 6. 事件處理 ---
   const handleDailySubmit = async (e) => {
@@ -360,6 +419,10 @@ export default function App() {
         nextS: "",
         reviews: "",
       });
+      setTimeout(
+        () => setUiStatus({ loading: false, msg: "", type: "" }),
+        3000
+      );
     } catch (err) {
       setUiStatus({ loading: false, msg: err.message, type: "error" });
     }
@@ -367,7 +430,10 @@ export default function App() {
 
   const handleMaintSave = async (m) => {
     const id = `${maintYear}-${m}_${maintBranch}`;
-    const data = maintGrid[m] || {};
+    const data =
+      maintGrid[m] ||
+      strategyData.processedHistory.find((h) => h.id === id) ||
+      {};
     try {
       await setDoc(doc(db, "wishvision_monthly_history", id), {
         id,
@@ -377,90 +443,41 @@ export default function App() {
         consultation: parseInt(data.consultation || 0),
         surgery: parseInt(data.surgery || 0),
         revenue: parseInt(data.revenue || 0),
-        conversion: parseFloat(data.conversion || 0),
-        successRate: parseFloat(data.successRate || 0),
+        conversion: parseFloat(data.conversion || data.conv || 0),
+        successRate: parseFloat(data.successRate || data.succ || 0),
         timestamp: Date.now(),
       });
-      alert(`${m}月 數據已更新`);
+      return true;
     } catch (err) {
-      alert("儲存失敗: " + err.message);
+      alert(`${m}月 儲存失敗`);
+      return false;
     }
   };
 
-  // --- 補回：圖表渲染函數 ---
-  const renderDailyChartLines = () => {
-    if (viewMode === "aggregate") {
-      return METRICS.filter((m) => selectedMetrics.includes(m.key)).map((m) => (
-        <Line
-          key={m.key}
-          type="monotone"
-          dataKey={m.key}
-          name={m.label}
-          stroke={m.color}
-          strokeWidth={m.key.startsWith("current") ? 3 : 2}
-          strokeDasharray={m.key.startsWith("next") ? "5 5" : "0"}
-          dot={{ r: 4 }}
-        />
-      ));
-    } else {
-      let lines = [];
-      const colors = ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"];
-      selectedBranches.forEach((b, idx) => {
-        METRICS.filter((m) => selectedMetrics.includes(m.key)).forEach((m) => {
-          lines.push(
-            <Line
-              key={`${b}_${m.key}`}
-              type="monotone"
-              dataKey={`${b}_${m.key}`}
-              name={`${b} ${m.label}`}
-              stroke={colors[idx % colors.length]}
-              strokeWidth={2}
-              strokeDasharray={m.key.startsWith("next") ? "3 3" : "0"}
-            />
-          );
-        });
-      });
-      return lines;
+  const handleMaintBulkSave = async () => {
+    setUiStatus({ loading: true, msg: "年度資料批次更新中...", type: "info" });
+    let count = 0;
+    for (let m of MONTHS) {
+      const success = await handleMaintSave(m);
+      if (success) count++;
     }
+    setUiStatus({
+      loading: false,
+      msg: `年度資料更新完成，共 ${count} 個月`,
+      type: "success",
+    });
+    setTimeout(() => setUiStatus({ loading: false, msg: "", type: "" }), 3000);
   };
 
-  const renderDailyReviewsLines = () => {
-    if (viewMode === "aggregate") {
-      return (
-        <Line
-          type="monotone"
-          dataKey="reviews"
-          name="總評論數(所選分院加總)"
-          stroke="#d97706"
-          strokeWidth={3}
-          dot={{ r: 4 }}
-        />
-      );
-    } else {
-      const colors = ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"];
-      return selectedBranches.map((b, idx) => (
-        <Line
-          key={`${b}_reviews`}
-          type="monotone"
-          dataKey={`${b}_reviews`}
-          name={`${b} 評論數`}
-          stroke={colors[idx % colors.length]}
-          strokeWidth={2}
-          dot={{ r: 3 }}
-        />
-      ));
-    }
-  };
-
-  // 渲染內容切換
-  const renderContent = () => {
+  // --- 渲染內容 ---
+  const renderTab = () => {
     switch (activeTab) {
       case "daily":
         return (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-500">
-            {/* 左側表單 */}
+            {/* 左側輸入表單 */}
             <div className="space-y-6">
-              <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
+              <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100">
                 <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-slate-800">
                   <PlusCircle className="text-blue-500" /> 每日紀錄入口
                 </h2>
@@ -476,7 +493,7 @@ export default function App() {
                         onChange={(e) =>
                           setFormData({ ...formData, date: e.target.value })
                         }
-                        className="w-full bg-slate-50 border-none rounded-xl p-2 text-sm"
+                        className="w-full bg-slate-50 border-none rounded-xl p-2.5 text-sm"
                       />
                     </div>
                     <div>
@@ -488,7 +505,7 @@ export default function App() {
                         onChange={(e) =>
                           setFormData({ ...formData, branch: e.target.value })
                         }
-                        className="w-full bg-slate-50 border-none rounded-xl p-2 text-sm"
+                        className="w-full bg-slate-50 border-none rounded-xl p-2.5 text-sm"
                       >
                         {BRANCHES.map((b) => (
                           <option key={b} value={b}>
@@ -499,9 +516,9 @@ export default function App() {
                     </div>
                   </div>
                   <div className="space-y-3">
-                    <div className="bg-blue-50/50 p-3 rounded-xl space-y-2">
+                    <div className="bg-blue-50/50 p-4 rounded-2xl space-y-2">
                       <p className="text-[10px] font-bold text-blue-600">
-                        本月實際累積
+                        本月累積指標
                       </p>
                       <div className="grid grid-cols-2 gap-2">
                         <input
@@ -530,7 +547,7 @@ export default function App() {
                         />
                       </div>
                     </div>
-                    <div className="bg-purple-50/50 p-3 rounded-xl space-y-2">
+                    <div className="bg-purple-50/50 p-4 rounded-2xl space-y-2">
                       <p className="text-[10px] font-bold text-purple-600">
                         下月預約儲備
                       </p>
@@ -555,7 +572,7 @@ export default function App() {
                         />
                       </div>
                     </div>
-                    <div className="bg-amber-50/50 p-3 rounded-xl space-y-2">
+                    <div className="bg-amber-50/50 p-4 rounded-2xl space-y-2">
                       <p className="text-[10px] font-bold text-amber-600">
                         口碑指標
                       </p>
@@ -570,15 +587,19 @@ export default function App() {
                       />
                     </div>
                   </div>
-                  <button className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-black transition-all">
-                    儲存數據
+                  <button className="w-full bg-slate-900 text-white font-bold py-3.5 rounded-2xl shadow-lg hover:bg-black transition-all flex justify-center items-center gap-2">
+                    {uiStatus.loading ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      "儲存今日數據"
+                    )}
                   </button>
                   {uiStatus.msg && (
                     <p
-                      className={`text-center text-xs font-bold ${
+                      className={`text-center text-xs font-bold p-2 rounded-xl border ${
                         uiStatus.type === "success"
-                          ? "text-green-500"
-                          : "text-blue-500"
+                          ? "bg-green-50 border-green-100 text-green-600"
+                          : "bg-blue-50 border-blue-100 text-blue-600"
                       }`}
                     >
                       {uiStatus.msg}
@@ -588,22 +609,21 @@ export default function App() {
               </div>
             </div>
 
-            {/* 右側觀測看板 */}
+            {/* 右側儀表板 */}
             <div className="lg:col-span-2 space-y-6">
-              {/* 控制列 (已補回：合併加總 / 分院對比切換鈕) */}
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-wrap justify-between items-center gap-4">
+              <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-wrap justify-between items-center gap-4">
                 <div className="flex gap-4 items-center">
                   <input
                     type="month"
                     value={selectedMonth}
                     onChange={(e) => setSelectedMonth(e.target.value)}
-                    className="bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold"
+                    className="bg-slate-100 border-none rounded-xl px-4 py-2.5 text-sm font-bold"
                   />
-                  <div className="bg-slate-100 p-1 rounded-xl flex gap-1 text-xs font-bold">
+                  <div className="bg-slate-100 p-1 rounded-xl flex gap-1 text-[10px] font-black uppercase">
                     <button
-                      onClick={() => setViewMode("aggregate")}
-                      className={`px-3 py-1.5 rounded-lg transition-all ${
-                        viewMode === "aggregate"
+                      onClick={() => setDailyViewMode("aggregate")}
+                      className={`px-4 py-2 rounded-lg transition-all ${
+                        dailyViewMode === "aggregate"
                           ? "bg-white text-slate-900 shadow-sm"
                           : "text-slate-400"
                       }`}
@@ -611,9 +631,9 @@ export default function App() {
                       合併加總
                     </button>
                     <button
-                      onClick={() => setViewMode("compare")}
-                      className={`px-3 py-1.5 rounded-lg transition-all ${
-                        viewMode === "compare"
+                      onClick={() => setDailyViewMode("compare")}
+                      className={`px-4 py-2 rounded-lg transition-all ${
+                        dailyViewMode === "compare"
                           ? "bg-white text-slate-900 shadow-sm"
                           : "text-slate-400"
                       }`}
@@ -622,16 +642,17 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {BRANCHES.map((b) => (
                     <button
                       key={b}
                       onClick={() => {
-                        if (selectedBranches.includes(b))
-                          setSelectedBranches(
-                            selectedBranches.filter((x) => x !== b)
-                          );
-                        else setSelectedBranches([...selectedBranches, b]);
+                        if (selectedBranches.includes(b)) {
+                          if (selectedBranches.length > 1)
+                            setSelectedBranches(
+                              selectedBranches.filter((x) => x !== b)
+                            );
+                        } else setSelectedBranches([...selectedBranches, b]);
                       }}
                       className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 ${
                         selectedBranches.includes(b)
@@ -648,39 +669,9 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 指標篩選器 (已補回) */}
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                <span className="text-xs font-bold text-slate-400 uppercase block mb-2 flex items-center gap-1">
-                  <Activity className="w-3.5 h-3.5" /> 圖表指標
-                </span>
-                <div className="flex flex-wrap gap-2">
-                  {METRICS.map((m) => (
-                    <button
-                      key={m.key}
-                      onClick={() => handleMetricToggle(m.key)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1 ${
-                        selectedMetrics.includes(m.key)
-                          ? "text-white"
-                          : "bg-white text-slate-400"
-                      }`}
-                      style={
-                        selectedMetrics.includes(m.key)
-                          ? { backgroundColor: m.color, borderColor: m.color }
-                          : {}
-                      }
-                    >
-                      {selectedMetrics.includes(m.key) && (
-                        <CheckCircle className="w-3 h-3 text-white" />
-                      )}{" "}
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 實質日增動能速度卡片 (已補回) */}
-              <div className="bg-white rounded-2xl shadow-sm p-4 border border-slate-100">
-                <span className="text-[10px] font-bold text-slate-400 uppercase block mb-3 flex items-center gap-1">
+              {/* 每日增量速度 (避震大腦) */}
+              <div className="bg-white rounded-3xl p-4 border border-slate-100">
+                <span className="text-[10px] font-black text-slate-400 uppercase block mb-3 flex items-center gap-1">
                   <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />{" "}
                   各分院實質日增動能速度
                 </span>
@@ -688,26 +679,30 @@ export default function App() {
                   {dailyMetrics.branchSummary.map((s) => (
                     <div
                       key={s.branch}
-                      className={`p-3 rounded-xl border transition-all ${
+                      className={`p-3 rounded-2xl border transition-all ${
                         s.isFiltered
-                          ? "bg-slate-50/80 border-slate-200"
+                          ? "bg-slate-50/80 border-slate-200 shadow-sm"
                           : "bg-white border-slate-100 opacity-40"
                       }`}
                     >
-                      <p className="text-xs font-bold text-slate-700 truncate">
+                      <p className="text-[11px] font-black text-slate-700 truncate mb-2">
                         {s.branch}
                       </p>
-                      <div className="mt-2 space-y-1">
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-slate-400">諮詢日增:</span>
-                          <span className="font-bold text-blue-600">
-                            +{s.avgC} /天
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-slate-400 font-bold">
+                            諮詢:
+                          </span>
+                          <span className="font-black text-blue-600">
+                            +{s.avgC}
                           </span>
                         </div>
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-slate-400">手術日增:</span>
-                          <span className="font-bold text-emerald-600">
-                            +{s.avgS} /天
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-slate-400 font-bold">
+                            手術:
+                          </span>
+                          <span className="font-black text-emerald-600">
+                            +{s.avgS}
                           </span>
                         </div>
                       </div>
@@ -716,189 +711,271 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 預估落點卡片 (避震演算法驅動) */}
+              {/* 預估落點卡片 */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-gradient-to-br from-blue-600 to-blue-700 p-6 rounded-3xl text-white shadow-xl">
-                  <div className="flex justify-between items-start">
-                    <p className="text-sm font-medium opacity-80">
-                      本月諮詢預估落點
-                    </p>
-                    <Zap className="w-5 h-5 text-blue-300 fill-blue-300" />
-                  </div>
-                  <h3 className="text-4xl font-black mt-2">
+                <div className="bg-gradient-to-br from-blue-600 to-blue-800 p-6 rounded-[2rem] text-white shadow-xl shadow-blue-100 relative overflow-hidden">
+                  <Activity className="absolute -right-4 -bottom-4 w-32 h-32 opacity-10" />
+                  <p className="text-xs font-bold opacity-70 uppercase tracking-widest">
+                    本月諮詢預估落點
+                  </p>
+                  <h3 className="text-5xl font-black mt-2">
                     {dailyMetrics.totalForeC}{" "}
-                    <span className="text-sm font-normal opacity-60">人</span>
+                    <span className="text-sm font-medium opacity-50">人</span>
                   </h3>
-                  <div className="mt-4 flex gap-4 text-xs">
-                    <div className="bg-white/10 px-3 py-1.5 rounded-lg">
+                  <div className="mt-6 flex gap-4 text-[10px] font-black uppercase">
+                    <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
                       累積: {dailyMetrics.totalCurC}
                     </div>
-                    <div className="bg-white/10 px-3 py-1.5 rounded-lg">
-                      進度: {dailyMetrics.maxDayObserved}天
+                    <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
+                      進度: {dailyMetrics.maxDayObserved} /{" "}
+                      {dailyMetrics.totalDays} 天
                     </div>
                   </div>
                 </div>
-                <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 p-6 rounded-3xl text-white shadow-xl">
-                  <div className="flex justify-between items-start">
-                    <p className="text-sm font-medium opacity-80">
-                      本月手術預估落點
-                    </p>
-                    <Target className="w-5 h-5 text-emerald-300 fill-emerald-300" />
-                  </div>
-                  <h3 className="text-4xl font-black mt-2">
+                <div className="bg-gradient-to-br from-emerald-600 to-emerald-800 p-6 rounded-[2rem] text-white shadow-xl shadow-emerald-100 relative overflow-hidden">
+                  <Target className="absolute -right-4 -bottom-4 w-32 h-32 opacity-10" />
+                  <p className="text-xs font-bold opacity-70 uppercase tracking-widest">
+                    本月手術預估落點
+                  </p>
+                  <h3 className="text-5xl font-black mt-2">
                     {dailyMetrics.totalForeS}{" "}
-                    <span className="text-sm font-normal opacity-60">台</span>
+                    <span className="text-sm font-medium opacity-50">台</span>
                   </h3>
-                  <div className="mt-4 flex gap-4 text-xs">
-                    <div className="bg-white/10 px-3 py-1.5 rounded-lg">
+                  <div className="mt-6 flex gap-4 text-[10px] font-black uppercase">
+                    <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
                       累積: {dailyMetrics.totalCurS}
                     </div>
-                    <div className="bg-white/10 px-3 py-1.5 rounded-lg">
-                      進度: {dailyMetrics.maxDayObserved}天
+                    <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
+                      進度: {dailyMetrics.maxDayObserved} /{" "}
+                      {dailyMetrics.totalDays} 天
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* 主折線圖 (已補回) */}
-              <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
-                <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-1.5">
-                  <BarChart2 className="w-4 h-4 text-blue-500" />{" "}
-                  營運累積與動能走勢圖
-                </h3>
-                <div className="w-full h-72">
-                  {dailyMetrics.chartData.length === 0 ? (
-                    <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">
-                      尚無數據
-                    </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={dailyMetrics.chartData}
-                        margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+              {/* 圖表區域 (補回遺失組件) */}
+              <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                    <BarChart2 className="w-4 h-4 text-blue-500" />{" "}
+                    營運動能累積走勢
+                  </h3>
+                  <div className="flex flex-wrap gap-1">
+                    {METRICS.map((m) => (
+                      <button
+                        key={m.key}
+                        onClick={() => {
+                          if (selectedMetrics.includes(m.key)) {
+                            if (selectedMetrics.length > 1)
+                              setSelectedMetrics(
+                                selectedMetrics.filter((x) => x !== m.key)
+                              );
+                          } else
+                            setSelectedMetrics([...selectedMetrics, m.key]);
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black transition-all border ${
+                          selectedMetrics.includes(m.key)
+                            ? "text-white"
+                            : "bg-white text-slate-300"
+                        }`}
+                        style={
+                          selectedMetrics.includes(m.key)
+                            ? { backgroundColor: m.color, borderColor: m.color }
+                            : {}
+                        }
                       >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis
-                          dataKey="date"
-                          stroke="#94a3b8"
-                          fontSize={11}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          stroke="#94a3b8"
-                          fontSize={11}
-                          tickLine={false}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            borderRadius: "12px",
-                            border: "none",
-                            boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
-                            fontSize: "12px",
-                          }}
-                        />
-                        <Legend
-                          wrapperStyle={{
-                            paddingTop: "20px",
-                            fontSize: "12px",
-                          }}
-                          iconType="circle"
-                        />
-                        {renderDailyChartLines()}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  )}
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={dailyMetrics.chartData}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="#f1f5f9"
+                      />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fontSize: 10, fontWeight: 700 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 10, fontWeight: 700 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          borderRadius: "16px",
+                          border: "none",
+                          boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
+                          fontSize: "11px",
+                        }}
+                      />
+                      <Legend
+                        iconType="circle"
+                        wrapperStyle={{
+                          fontSize: "10px",
+                          fontWeight: 900,
+                          paddingTop: "10px",
+                        }}
+                      />
+                      {dailyViewMode === "aggregate"
+                        ? METRICS.filter((m) =>
+                            selectedMetrics.includes(m.key)
+                          ).map((m) => (
+                            <Line
+                              key={m.key}
+                              type="monotone"
+                              dataKey={m.key}
+                              name={m.label}
+                              stroke={m.color}
+                              strokeWidth={3}
+                              dot={{ r: 3 }}
+                              strokeDasharray={
+                                m.key.includes("next") ? "5 5" : "0"
+                              }
+                            />
+                          ))
+                        : selectedBranches.map((b, i) =>
+                            METRICS.filter((m) =>
+                              selectedMetrics.includes(m.key)
+                            ).map((m) => (
+                              <Line
+                                key={`${b}_${m.key}`}
+                                type="monotone"
+                                dataKey={`${b}_${m.key}`}
+                                name={`${b} ${m.label}`}
+                                stroke={
+                                  ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"][
+                                    i % 4
+                                  ]
+                                }
+                                strokeWidth={2}
+                                dot={{ r: 2 }}
+                                strokeDasharray={
+                                  m.key.includes("next") ? "5 5" : "0"
+                                }
+                              />
+                            ))
+                          )}
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
 
-              {/* 口碑聲量折線圖 (已補回) */}
-              <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
-                <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-1.5">
+              {/* 口碑聲量圖 */}
+              <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                <h3 className="text-sm font-black text-slate-800 mb-6 flex items-center gap-2">
                   <Star className="w-4 h-4 text-amber-500 fill-amber-500" />{" "}
-                  口碑聲量指標（Google 評論總數）走勢圖
+                  口碑聲量指標（Google 評論）
                 </h3>
-                <div className="w-full h-72">
-                  {dailyMetrics.chartData.length === 0 ? (
-                    <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">
-                      尚無數據
-                    </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={dailyMetrics.chartData}
-                        margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis
-                          dataKey="date"
-                          stroke="#94a3b8"
-                          fontSize={11}
-                          tickLine={false}
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={dailyMetrics.chartData}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="#f1f5f9"
+                      />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fontSize: 10, fontWeight: 700 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 10, fontWeight: 700 }}
+                        axisLine={false}
+                        tickLine={false}
+                        domain={["auto", "auto"]}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          borderRadius: "16px",
+                          fontSize: "11px",
+                        }}
+                      />
+                      <Legend
+                        iconType="circle"
+                        wrapperStyle={{ fontSize: "10px", fontWeight: 900 }}
+                      />
+                      {dailyViewMode === "aggregate" ? (
+                        <Line
+                          type="monotone"
+                          dataKey="reviews"
+                          name="總評論數"
+                          stroke="#f59e0b"
+                          strokeWidth={4}
+                          dot={{ r: 4 }}
                         />
-                        <YAxis
-                          stroke="#94a3b8"
-                          fontSize={11}
-                          tickLine={false}
-                          domain={["auto", "auto"]}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            borderRadius: "12px",
-                            border: "none",
-                            boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
-                            fontSize: "12px",
-                          }}
-                        />
-                        <Legend
-                          wrapperStyle={{
-                            paddingTop: "20px",
-                            fontSize: "12px",
-                          }}
-                          iconType="circle"
-                        />
-                        {renderDailyReviewsLines()}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  )}
+                      ) : (
+                        selectedBranches.map((b, i) => (
+                          <Line
+                            key={`${b}_reviews`}
+                            type="monotone"
+                            dataKey={`${b}_reviews`}
+                            name={`${b} 評論`}
+                            stroke={
+                              ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"][
+                                i % 4
+                              ]
+                            }
+                            strokeWidth={2}
+                            dot={{ r: 3 }}
+                          />
+                        ))
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
 
-              {/* 明細表格 */}
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-                <div className="p-4 border-b border-slate-50 flex justify-between items-center bg-slate-50/50">
-                  <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                    <Table className="w-4 h-4 text-blue-500" /> 每日實質動能日誌
+              {/* 明細清單 */}
+              <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
+                <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                    每日紀錄詳細日誌
                   </h3>
                 </div>
-                <div className="max-h-[300px] overflow-y-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="bg-slate-50 text-slate-400 sticky top-0">
+                <div className="max-h-64 overflow-y-auto">
+                  <table className="w-full text-[11px] text-left">
+                    <thead className="bg-slate-50 text-slate-400 sticky top-0 font-bold uppercase">
                       <tr>
-                        <th className="p-3">日期</th>
-                        <th className="p-3">分院</th>
-                        <th className="p-3">諮詢</th>
-                        <th className="p-3">手術</th>
-                        <th className="p-3">下月預約</th>
-                        <th className="p-3">評論</th>
+                        <th className="p-4">日期</th>
+                        <th className="p-4">分院</th>
+                        <th className="p-4 text-blue-600">諮詢</th>
+                        <th className="p-4 text-emerald-600">手術</th>
+                        <th className="p-4">下月預約</th>
+                        <th className="p-4">評論</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
                       {dailyMetrics.dailyLogs.map((r, i) => (
-                        <tr key={i} className="hover:bg-slate-50">
-                          <td className="p-3 text-slate-400">
+                        <tr
+                          key={i}
+                          className="hover:bg-slate-50 transition-colors"
+                        >
+                          <td className="p-4 font-bold text-slate-400">
                             {r.date.slice(5)}
                           </td>
-                          <td className="p-3 font-bold">{r.branch}</td>
-                          <td className="p-3 font-semibold text-blue-600">
+                          <td className="p-4 font-black text-slate-900">
+                            {r.branch}
+                          </td>
+                          <td className="p-4 font-black text-blue-600">
                             {r.currentC}
                           </td>
-                          <td className="p-3 font-semibold text-emerald-600">
+                          <td className="p-4 font-black text-emerald-600">
                             {r.currentS}
                           </td>
-                          <td className="p-3 text-purple-600">
-                            {r.nextC}/{r.nextS}
+                          <td className="p-4 text-slate-500 font-bold">
+                            {r.nextC} / {r.nextS}
                           </td>
-                          <td className="p-3 text-amber-600 font-bold">
+                          <td className="p-4 text-amber-600 font-black">
                             {r.reviews}
                           </td>
                         </tr>
@@ -912,63 +989,81 @@ export default function App() {
         );
       case "strategy":
         return (
-          <div className="space-y-6 animate-in slide-in-from-bottom duration-500">
-            {/* 戰略篩選 */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-wrap gap-6 items-end">
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 block mb-2">
-                  檢視維度
-                </label>
-                <div className="bg-slate-100 p-1 rounded-xl flex gap-1">
-                  <button
-                    onClick={() => setViewMode("aggregate")}
-                    className={`px-4 py-1.5 rounded-lg text-xs font-bold ${
-                      viewMode === "aggregate"
-                        ? "bg-white shadow-sm"
-                        : "text-slate-400"
-                    }`}
-                  >
-                    全院加總
-                  </button>
-                  <button
-                    onClick={() => setViewMode("compare")}
-                    className={`px-4 py-1.5 rounded-lg text-xs font-bold ${
-                      viewMode === "compare"
-                        ? "bg-white shadow-sm"
-                        : "text-slate-400"
-                    }`}
-                  >
-                    單一分院
-                  </button>
+          <div className="space-y-8 animate-in slide-in-from-bottom duration-500">
+            {/* 1. 年度趨勢 (圖表一) */}
+            <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
+              <div className="flex flex-wrap justify-between items-end gap-6 mb-8">
+                <div>
+                  <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                    <TrendingUp className="w-6 h-6 text-blue-600" />{" "}
+                    年度戰略走勢全覽 (Macro Annual Trend)
+                  </h3>
+                  <p className="text-xs text-slate-400 font-bold mt-1">
+                    追蹤跨年度產能擴張與醫療品質穩定度
+                  </p>
+                </div>
+                <div className="flex gap-4 items-center">
+                  <div className="bg-slate-100 p-1 rounded-2xl flex gap-1 text-[11px] font-black uppercase">
+                    <button
+                      onClick={() => setStratFilterMode("aggregate")}
+                      className={`px-5 py-2.5 rounded-xl transition-all ${
+                        stratFilterMode === "aggregate"
+                          ? "bg-white text-slate-900 shadow-md"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      全院加總
+                    </button>
+                    <button
+                      onClick={() => setStratFilterMode("compare")}
+                      className={`px-5 py-2.5 rounded-xl transition-all ${
+                        stratFilterMode === "compare"
+                          ? "bg-white text-slate-900 shadow-md"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      單一分院
+                    </button>
+                  </div>
+                  {stratFilterMode === "compare" && (
+                    <select
+                      value={stratBranch}
+                      onChange={(e) => setStratBranch(e.target.value)}
+                      className="bg-slate-100 border-none rounded-2xl px-5 py-2.5 text-xs font-black"
+                    >
+                      {BRANCHES.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <div className="h-10 w-px bg-slate-200 mx-2"></div>
+                  <div className="bg-blue-600 p-1 rounded-2xl flex gap-1 text-[11px] font-black uppercase">
+                    <button
+                      onClick={() => setStratView("macro_A")}
+                      className={`px-5 py-2.5 rounded-xl transition-all ${
+                        stratView === "macro_A"
+                          ? "bg-white text-blue-700 shadow-md"
+                          : "text-white opacity-60"
+                      }`}
+                    >
+                      視角 A: 產值流量
+                    </button>
+                    <button
+                      onClick={() => setStratView("macro_B")}
+                      className={`px-5 py-2.5 rounded-xl transition-all ${
+                        stratView === "macro_B"
+                          ? "bg-white text-blue-700 shadow-md"
+                          : "text-white opacity-60"
+                      }`}
+                    >
+                      視角 B: 醫療品質
+                    </button>
+                  </div>
                 </div>
               </div>
-              {viewMode === "compare" && (
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 block mb-2">
-                    選擇分院
-                  </label>
-                  <select
-                    value={maintBranch}
-                    onChange={(e) => setMaintBranch(e.target.value)}
-                    className="bg-slate-100 border-none rounded-xl px-4 py-1.5 text-xs font-bold"
-                  >
-                    {BRANCHES.map((b) => (
-                      <option key={b} value={b}>
-                        {b}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </div>
-
-            {/* 年度趨勢圖 (圖表一) */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-              <h3 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-blue-500" />{" "}
-                年度戰略走勢趨勢圖 (Macro Trend)
-              </h3>
-              <div className="h-[400px]">
+              <div className="h-96">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={strategyData.yearlyTrend}>
                     <CartesianGrid
@@ -980,67 +1075,213 @@ export default function App() {
                       dataKey="name"
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fontSize: 12, fill: "#94a3b8" }}
+                      tick={{ fontSize: 12, fontWeight: 800, fill: "#94a3b8" }}
                     />
                     <YAxis
                       yAxisId="left"
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fontSize: 12, fill: "#94a3b8" }}
+                      tick={{ fontSize: 11, fontWeight: 700, fill: "#94a3b8" }}
                     />
                     <YAxis
                       yAxisId="right"
                       orientation="right"
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fontSize: 12, fill: "#94a3b8" }}
+                      tick={{ fontSize: 11, fontWeight: 700, fill: "#94a3b8" }}
                     />
                     <Tooltip
                       contentStyle={{
-                        borderRadius: "16px",
+                        borderRadius: "20px",
                         border: "none",
-                        boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
+                        boxShadow: "0 20px 25px -5px rgb(0 0 0 / 0.1)",
                       }}
                     />
-                    <Legend iconType="circle" />
-                    <Bar
-                      yAxisId="right"
-                      dataKey="revenue"
-                      name="年度總營收"
-                      fill="#fbbf24"
-                      radius={[10, 10, 0, 0]}
-                      barSize={40}
-                    />
-                    <Line
-                      yAxisId="left"
-                      type="monotone"
-                      dataKey="consultation"
-                      name="諮詢總量"
-                      stroke="#2563eb"
-                      strokeWidth={3}
-                      dot={{ r: 4 }}
-                    />
-                    <Line
-                      yAxisId="left"
-                      type="monotone"
-                      dataKey="surgery"
-                      name="手術總量"
-                      stroke="#16a34a"
-                      strokeWidth={3}
-                      dot={{ r: 4 }}
-                    />
+                    <Legend verticalAlign="top" height={36} iconType="circle" />
+                    {stratView === "macro_A" ? (
+                      <>
+                        <Bar
+                          yAxisId="right"
+                          dataKey="revenue"
+                          name="年度總營收"
+                          fill="#fbbf24"
+                          radius={[12, 12, 0, 0]}
+                          barSize={40}
+                        />
+                        <Line
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="consultation"
+                          name="諮詢總量"
+                          stroke="#2563eb"
+                          strokeWidth={4}
+                          dot={{ r: 5, fill: "#2563eb" }}
+                        />
+                        <Line
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="surgery"
+                          name="手術總量"
+                          stroke="#16a34a"
+                          strokeWidth={4}
+                          dot={{ r: 5, fill: "#16a34a" }}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <Line
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="conv"
+                          name="平均轉換率 (%)"
+                          stroke="#7c3aed"
+                          strokeWidth={4}
+                          dot={{ r: 5, fill: "#7c3aed" }}
+                        />
+                        <Line
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="succ"
+                          name="醫療成功率 (%)"
+                          stroke="#06b6d4"
+                          strokeWidth={4}
+                          dot={{ r: 5, fill: "#06b6d4" }}
+                        />
+                        <Bar
+                          yAxisId="right"
+                          dataKey="asp"
+                          name="平均 ASP (客單價)"
+                          fill="#e2e8f0"
+                          radius={[12, 12, 0, 0]}
+                          barSize={30}
+                        />
+                      </>
+                    )}
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
+
+              {/* 表格 B: 年度明細與成長率 */}
+              <div className="mt-12 overflow-hidden rounded-3xl border border-slate-100">
+                <table className="w-full text-left text-[11px]">
+                  <thead className="bg-slate-50 text-slate-400 font-black uppercase">
+                    <tr>
+                      <th className="p-4">年度指標</th>
+                      <th className="p-4">總諮詢量</th>
+                      <th className="p-4">YoY</th>
+                      <th className="p-4">總手術量</th>
+                      <th className="p-4">YoY</th>
+                      <th className="p-4">總營業額</th>
+                      <th className="p-4">YoY</th>
+                      <th className="p-4">平均 ASP</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {strategyData.yearlyTrend
+                      .sort((a, b) => b.name - a.name)
+                      .map((y, i) => (
+                        <tr
+                          key={i}
+                          className="hover:bg-slate-50 transition-all font-bold"
+                        >
+                          <td className="p-4 text-slate-900 font-black text-sm">
+                            {y.name}
+                          </td>
+                          <td className="p-4 text-blue-600">
+                            {y.consultation.toLocaleString()}
+                          </td>
+                          <td
+                            className={`p-4 ${
+                              y.yoyCon.includes("-")
+                                ? "text-red-500"
+                                : "text-green-600"
+                            }`}
+                          >
+                            {y.yoyCon}
+                          </td>
+                          <td className="p-4 text-emerald-600">
+                            {y.surgery.toLocaleString()}
+                          </td>
+                          <td
+                            className={`p-4 ${
+                              y.yoySur.includes("-")
+                                ? "text-red-500"
+                                : "text-green-600"
+                            }`}
+                          >
+                            {y.yoySur}
+                          </td>
+                          <td className="p-4 text-amber-600">
+                            ${(y.revenue / 10000).toFixed(0)}萬
+                          </td>
+                          <td
+                            className={`p-4 ${
+                              y.yoyRev.includes("-")
+                                ? "text-red-500"
+                                : "text-green-600"
+                            }`}
+                          >
+                            {y.yoyRev}
+                          </td>
+                          <td className="p-4 text-slate-400">
+                            ${y.asp.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
-            {/* 月度 YoY 對比 (圖表二) */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-              <h3 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2">
-                <BarChart2 className="w-4 h-4 text-purple-500" /> 跨年度同月營收
-                YoY 對比分析
-              </h3>
-              <div className="h-[350px]">
+            {/* 2. 月度 YoY (圖表二) */}
+            <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
+              <div className="flex flex-wrap justify-between items-end gap-6 mb-8">
+                <div>
+                  <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                    <BarChart2 className="w-6 h-6 text-purple-600" /> 月度 YoY
+                    戰術對比分析
+                  </h3>
+                  <p className="text-xs text-slate-400 font-bold mt-1">
+                    基準年：{stratBaseYear} vs 前期：
+                    {parseInt(stratBaseYear) - 1}
+                  </p>
+                </div>
+                <div className="flex gap-4 items-center">
+                  <select
+                    value={stratBaseYear}
+                    onChange={(e) => setStratBaseYear(e.target.value)}
+                    className="bg-slate-100 border-none rounded-2xl px-5 py-2.5 text-xs font-black"
+                  >
+                    {YEARS.map((y) => (
+                      <option key={y} value={y}>
+                        {y} 年
+                      </option>
+                    ))}
+                  </select>
+                  <div className="bg-slate-100 p-1.5 rounded-2xl flex gap-1 text-[10px] font-black uppercase">
+                    {[
+                      { id: "revenue", label: "營收", icon: DollarSign },
+                      { id: "consultation", label: "諮詢", icon: Activity },
+                      { id: "surgery", label: "手術", icon: Target },
+                      { id: "conversion", label: "轉換%", icon: Percent },
+                      { id: "success", label: "成功%", icon: Star },
+                    ].map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => setStratMetric(m.id)}
+                        className={`flex items-center gap-1.5 px-4 py-2 rounded-xl transition-all ${
+                          stratMetric === m.id
+                            ? "bg-white text-purple-700 shadow-md"
+                            : "text-slate-400"
+                        }`}
+                      >
+                        <m.icon className="w-3.5 h-3.5" /> {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={strategyData.monthlyYoY}>
                     <CartesianGrid
@@ -1052,81 +1293,121 @@ export default function App() {
                       dataKey="name"
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fontSize: 12, fill: "#94a3b8" }}
+                      tick={{ fontSize: 12, fontWeight: 800, fill: "#94a3b8" }}
                     />
                     <YAxis
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fontSize: 12, fill: "#94a3b8" }}
+                      tick={{ fontSize: 11, fontWeight: 700, fill: "#94a3b8" }}
+                      domain={["auto", "auto"]}
                     />
-                    <Tooltip />
-                    <Legend />
-                    {YEARS.slice(-3).map((y, i) => (
-                      <Line
-                        key={y}
-                        type="monotone"
-                        dataKey={`val_${y}`}
-                        name={`${y}年度`}
-                        stroke={["#cbd5e1", "#94a3b8", "#2563eb"][i]}
-                        strokeWidth={i === 2 ? 4 : 2}
-                        dot={i === 2}
-                      />
-                    ))}
+                    <Tooltip
+                      contentStyle={{
+                        borderRadius: "20px",
+                        border: "none",
+                        boxShadow: "0 20px 25px -5px rgb(0 0 0 / 0.1)",
+                      }}
+                    />
+                    <Legend verticalAlign="top" height={36} iconType="circle" />
+                    <Line
+                      type="monotone"
+                      dataKey="baseVal"
+                      name={`${stratBaseYear}年度 (基準)`}
+                      stroke="#7c3aed"
+                      strokeWidth={5}
+                      dot={{ r: 6, fill: "#7c3aed" }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="prevVal"
+                      name={`${parseInt(stratBaseYear) - 1}年度 (對比)`}
+                      stroke="#cbd5e1"
+                      strokeWidth={3}
+                      strokeDasharray="5 5"
+                      dot={{ r: 4, fill: "#cbd5e1" }}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-            </div>
 
-            {/* 歷史數據清單 */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-              <div className="p-4 bg-slate-900 text-white flex justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-widest">
-                  歷史戰略明細數據庫
-                </h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-[11px] text-left">
-                  <thead className="bg-slate-50 text-slate-400">
+              {/* 表格 A: 月度 YoY 明細 */}
+              <div className="mt-12 overflow-hidden rounded-3xl border border-slate-100 shadow-sm">
+                <table className="w-full text-left text-[11px]">
+                  <thead className="bg-slate-900 text-white font-black uppercase">
                     <tr>
-                      <th className="p-3">年份-月</th>
-                      <th className="p-3">分院</th>
-                      <th className="p-3">諮詢</th>
-                      <th className="p-3">手術</th>
-                      <th className="p-3">總營收</th>
-                      <th className="p-3">ASP</th>
-                      <th className="p-3">轉換</th>
-                      <th className="p-3">成功</th>
+                      <th className="p-4">月度對比指標</th>
+                      <th className="p-4">當期實績</th>
+                      <th className="p-4">前期對比</th>
+                      <th className="p-4">YoY 成長率</th>
+                      <th className="p-4">轉換率</th>
+                      <th className="p-4">YoY</th>
+                      <th className="p-4">成功率</th>
+                      <th className="p-4">YoY</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {strategyData.historyMapped
-                      .sort((a, b) => b.id.localeCompare(a.id))
-                      .slice(0, 24)
-                      .map((h, i) => (
-                        <tr
-                          key={i}
-                          className="hover:bg-slate-50 transition-colors"
+                    {strategyData.monthlyYoY.map((m, i) => (
+                      <tr
+                        key={i}
+                        className="hover:bg-slate-50 transition-all font-bold"
+                      >
+                        <td className="p-4 text-slate-400 font-black">
+                          {m.name}
+                        </td>
+                        <td className="p-4 text-slate-900 font-black text-sm">
+                          {stratMetric === "revenue"
+                            ? `$${(m.baseVal / 10000).toFixed(0)}萬`
+                            : m.baseVal}
+                        </td>
+                        <td className="p-4 text-slate-400">
+                          {stratMetric === "revenue"
+                            ? `$${(m.prevVal / 10000).toFixed(0)}萬`
+                            : m.prevVal}
+                        </td>
+                        <td
+                          className={`p-4 flex items-center gap-1 ${
+                            m.yoy.includes("-")
+                              ? "text-red-500"
+                              : "text-green-600"
+                          }`}
                         >
-                          <td className="p-3 font-bold text-slate-400">
-                            {h.year}-{h.month}
-                          </td>
-                          <td className="p-3 font-bold">{h.branch}</td>
-                          <td className="p-3">{h.consultation}</td>
-                          <td className="p-3">{h.surgery}</td>
-                          <td className="p-3 font-bold text-slate-900">
-                            ${(h.revenue / 10000).toFixed(1)}萬
-                          </td>
-                          <td className="p-3 text-amber-600 font-bold">
-                            ${h.asp.toLocaleString()}
-                          </td>
-                          <td className="p-3 text-purple-600 font-bold">
-                            {h.conv}%
-                          </td>
-                          <td className="p-3 text-blue-600 font-bold">
-                            {h.succ}%
-                          </td>
-                        </tr>
-                      ))}
+                          {m.yoy.includes("-") ? (
+                            <TrendingDown className="w-3 h-3" />
+                          ) : (
+                            <ArrowUpRight className="w-3 h-3" />
+                          )}
+                          {m.yoy}
+                        </td>
+                        <td className="p-4 text-purple-600">
+                          {m.curData.conv || 0}%
+                        </td>
+                        <td
+                          className={`p-4 ${
+                            calcYoY(m.curData.conv, m.prevData.conv).includes(
+                              "-"
+                            )
+                              ? "text-red-500"
+                              : "text-green-600"
+                          }`}
+                        >
+                          {calcYoY(m.curData.conv, m.prevData.conv)}
+                        </td>
+                        <td className="p-4 text-blue-600">
+                          {m.curData.succ || 0}%
+                        </td>
+                        <td
+                          className={`p-4 ${
+                            calcYoY(m.curData.succ, m.prevData.succ).includes(
+                              "-"
+                            )
+                              ? "text-red-500"
+                              : "text-green-600"
+                          }`}
+                        >
+                          {calcYoY(m.curData.succ, m.prevData.succ)}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -1136,32 +1417,32 @@ export default function App() {
       case "maintenance":
         return (
           <div className="space-y-6 animate-in zoom-in-95 duration-300">
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
               <div className="flex flex-wrap gap-4 items-end mb-8">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 block mb-2">
-                    選擇維護年份
+                    維護年份
                   </label>
                   <select
                     value={maintYear}
                     onChange={(e) => setMaintYear(e.target.value)}
-                    className="bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold"
+                    className="bg-slate-100 border-none rounded-2xl px-5 py-3 text-sm font-black"
                   >
                     {YEARS.map((y) => (
                       <option key={y} value={y}>
-                        {y}
+                        {y} 年
                       </option>
                     ))}
                   </select>
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 block mb-2">
-                    選擇維護分院
+                    維護分院
                   </label>
                   <select
                     value={maintBranch}
                     onChange={(e) => setMaintBranch(e.target.value)}
-                    className="bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold"
+                    className="bg-slate-100 border-none rounded-2xl px-5 py-3 text-sm font-black"
                   >
                     {BRANCHES.map((b) => (
                       <option key={b} value={b}>
@@ -1171,133 +1452,143 @@ export default function App() {
                   </select>
                 </div>
                 <div className="flex-grow"></div>
-                <div className="text-right">
-                  <p className="text-xs text-slate-400">
-                    修改後請按該月份右側的「更新」按鈕
-                  </p>
-                </div>
+                <button
+                  onClick={handleMaintBulkSave}
+                  disabled={uiStatus.loading}
+                  className="bg-blue-600 text-white font-black px-6 py-3 rounded-2xl shadow-lg hover:bg-blue-700 transition-all flex items-center gap-2"
+                >
+                  <Database className="w-4 h-4" /> 批次儲存年度資料 ({maintYear}
+                  )
+                </button>
               </div>
+              {uiStatus.msg && (
+                <p className="mb-4 text-center text-xs font-black text-blue-600 bg-blue-50 p-3 rounded-2xl border border-blue-100">
+                  {uiStatus.msg}
+                </p>
+              )}
 
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto rounded-3xl border border-slate-50">
                 <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-slate-400 border-b border-slate-100">
-                      <th className="p-4 text-left">月份</th>
-                      <th className="p-4 text-left">諮詢量</th>
-                      <th className="p-4 text-left">手術量</th>
-                      <th className="p-4 text-left">總營收(NT$)</th>
-                      <th className="p-4 text-left">轉換率(%)</th>
-                      <th className="p-4 text-left">成功率(%)</th>
-                      <th className="p-4 text-center">操作</th>
+                  <thead className="bg-slate-50 text-slate-400 font-black uppercase text-[10px] tracking-widest">
+                    <tr>
+                      <th className="p-5 text-left">月份</th>
+                      <th className="p-5 text-left text-blue-600">諮詢量</th>
+                      <th className="p-5 text-left text-emerald-600">手術量</th>
+                      <th className="p-5 text-left text-amber-600">
+                        總營收(NT$)
+                      </th>
+                      <th className="p-5 text-left text-purple-600">
+                        CRM 轉換率%
+                      </th>
+                      <th className="p-5 text-left text-cyan-600">
+                        醫療成功率%
+                      </th>
+                      <th className="p-5 text-center">單月</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {MONTHS.map((m) => {
+                      const id = `${maintYear}-${m}_${maintBranch}`;
                       const existing =
-                        strategyData.historyMapped.find(
-                          (h) =>
-                            h.year === maintYear &&
-                            h.month === m &&
-                            h.branch === maintBranch
+                        strategyData.processedHistory.find(
+                          (h) => h.id === id
                         ) || {};
                       return (
-                        <tr key={m} className="hover:bg-slate-50">
-                          <td className="p-4 font-black text-slate-300 text-lg">
+                        <tr
+                          key={m}
+                          className="hover:bg-slate-50 transition-colors"
+                        >
+                          <td className="p-5 font-black text-slate-300 text-xl">
                             {m}
                           </td>
-                          <td className="p-4">
+                          <td className="p-5">
                             <input
                               type="number"
                               defaultValue={existing.consultation}
-                              onChange={(e) => {
-                                const val = e.target.value;
+                              onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    consultation: val,
+                                    consultation: e.target.value,
                                   },
-                                }));
-                              }}
-                              className="w-20 bg-transparent border-b border-slate-200 focus:border-blue-500 outline-none p-1 font-bold"
+                                }))
+                              }
+                              className="w-24 bg-slate-50 border-none rounded-xl p-2 font-black text-blue-600 focus:ring-2 ring-blue-500"
                             />
                           </td>
-                          <td className="p-4">
+                          <td className="p-5">
                             <input
                               type="number"
                               defaultValue={existing.surgery}
-                              onChange={(e) => {
-                                const val = e.target.value;
+                              onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    surgery: val,
+                                    surgery: e.target.value,
                                   },
-                                }));
-                              }}
-                              className="w-20 bg-transparent border-b border-slate-200 focus:border-blue-500 outline-none p-1 font-bold"
+                                }))
+                              }
+                              className="w-24 bg-slate-50 border-none rounded-xl p-2 font-black text-emerald-600 focus:ring-2 ring-emerald-500"
                             />
                           </td>
-                          <td className="p-4">
+                          <td className="p-5">
                             <input
                               type="number"
                               defaultValue={existing.revenue}
-                              onChange={(e) => {
-                                const val = e.target.value;
+                              onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    revenue: val,
+                                    revenue: e.target.value,
                                   },
-                                }));
-                              }}
-                              className="w-32 bg-transparent border-b border-slate-200 focus:border-blue-500 outline-none p-1 font-bold"
+                                }))
+                              }
+                              className="w-36 bg-slate-50 border-none rounded-xl p-2 font-black text-amber-600 focus:ring-2 ring-amber-500"
                             />
                           </td>
-                          <td className="p-4">
+                          <td className="p-5">
                             <input
                               type="number"
                               step="0.1"
-                              defaultValue={existing.conversion}
-                              onChange={(e) => {
-                                const val = e.target.value;
+                              defaultValue={existing.conv}
+                              onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    conversion: val,
+                                    conversion: e.target.value,
                                   },
-                                }));
-                              }}
-                              className="w-16 bg-transparent border-b border-slate-200 focus:border-blue-500 outline-none p-1 font-bold text-purple-600"
+                                }))
+                              }
+                              className="w-20 bg-slate-50 border-none rounded-xl p-2 font-black text-purple-600 focus:ring-2 ring-purple-500"
                             />{" "}
-                            %
+                            <span className="text-slate-300">%</span>
                           </td>
-                          <td className="p-4">
+                          <td className="p-5">
                             <input
                               type="number"
                               step="0.1"
-                              defaultValue={existing.successRate}
-                              onChange={(e) => {
-                                const val = e.target.value;
+                              defaultValue={existing.succ}
+                              onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    successRate: val,
+                                    successRate: e.target.value,
                                   },
-                                }));
-                              }}
-                              className="w-16 bg-transparent border-b border-slate-200 focus:border-blue-500 outline-none p-1 font-bold text-blue-600"
+                                }))
+                              }
+                              className="w-20 bg-slate-50 border-none rounded-xl p-2 font-black text-cyan-600 focus:ring-2 ring-cyan-500"
                             />{" "}
-                            %
+                            <span className="text-slate-300">%</span>
                           </td>
-                          <td className="p-4 text-center">
+                          <td className="p-5 text-center">
                             <button
                               onClick={() => handleMaintSave(m)}
-                              className="bg-slate-100 hover:bg-slate-900 hover:text-white text-slate-600 p-2 rounded-lg transition-all"
+                              className="bg-white border border-slate-200 hover:bg-slate-900 hover:text-white p-2.5 rounded-xl transition-all"
                             >
                               <RefreshCw className="w-4 h-4" />
                             </button>
@@ -1318,58 +1609,43 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans pb-20">
-      {/* 頂部導航 */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 h-20 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-blue-200 shadow-lg">
-              <TrendingUp className="w-6 h-6" />
+        <div className="max-w-7xl mx-auto px-6 h-24 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-blue-100 shadow-2xl">
+              <TrendingUp className="w-7 h-7" />
             </div>
             <div>
-              <h1 className="text-xl font-black tracking-tight">
-                WishVision BI <span className="text-blue-600">Pro</span>
+              <h1 className="text-2xl font-black tracking-tighter">
+                WishVision <span className="text-blue-600">Enterprise BI</span>
               </h1>
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                Strategic Management System
+              <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
+                Global Dynamic Strategy Hub
               </p>
             </div>
           </div>
-          <div className="flex bg-slate-100 p-1.5 rounded-2xl gap-1">
-            <button
-              onClick={() => setActiveTab("daily")}
-              className={`flex items-center gap-2 px-6 py-2 rounded-xl text-xs font-black transition-all ${
-                activeTab === "daily"
-                  ? "bg-white shadow-md text-slate-900"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              <Zap className="w-4 h-4" /> 每日動能追蹤
-            </button>
-            <button
-              onClick={() => setActiveTab("strategy")}
-              className={`flex items-center gap-2 px-6 py-2 rounded-xl text-xs font-black transition-all ${
-                activeTab === "strategy"
-                  ? "bg-white shadow-md text-slate-900"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              <BarChart2 className="w-4 h-4" /> 歷史戰略看板
-            </button>
-            <button
-              onClick={() => setActiveTab("maintenance")}
-              className={`flex items-center gap-2 px-6 py-2 rounded-xl text-xs font-black transition-all ${
-                activeTab === "maintenance"
-                  ? "bg-white shadow-md text-slate-900"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              <Database className="w-4 h-4" /> 數據維護矩陣
-            </button>
+          <div className="flex bg-slate-100 p-1.5 rounded-[1.5rem] gap-1">
+            {[
+              { id: "daily", label: "每日動能追蹤", icon: Zap },
+              { id: "strategy", label: "歷史戰略看板", icon: BarChart2 },
+              { id: "maintenance", label: "數據維護矩陣", icon: Database },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-8 py-3 rounded-2xl text-[11px] font-black transition-all ${
+                  activeTab === tab.id
+                    ? "bg-white shadow-xl text-slate-900"
+                    : "text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                <tab.icon className="w-4 h-4" /> {tab.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
-
-      <main className="max-w-7xl mx-auto px-4 py-8">{renderContent()}</main>
+      <main className="max-w-7xl mx-auto px-6 py-10">{renderTab()}</main>
     </div>
   );
 }
