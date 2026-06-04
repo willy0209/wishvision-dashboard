@@ -544,12 +544,12 @@ export default function App() {
 
   const handleMaintSave = async (m) => {
     const id = `${maintYear}-${m}_${maintBranch}`;
-    const data =
-      maintGrid[m] ||
-      strategyData.processedHistory.find((h) => h.id === id) ||
-      {};
+    // 💡 取出正在編輯的這格資料，如果沒編輯就用空物件
+    const editedData = maintGrid[m] || {};
+    const existingData =
+      strategyData.processedHistory.find((h) => h.id === id) || {};
 
-    // 💡 存檔時，強制將空白轉換為 null
+    // 💡 存檔時，強制將空白字串或未定義轉換為真正的 null
     const parseInput = (val) =>
       val === "" || val === null || val === undefined ? null : Number(val);
 
@@ -559,11 +559,32 @@ export default function App() {
         year: maintYear,
         month: m,
         branch: maintBranch,
-        consultation: parseInput(data.consultation),
-        surgery: parseInput(data.surgery),
-        revenue: parseInput(data.revenue),
-        conversion: parseInput(data.conversion ?? data.conv),
-        successRate: parseInput(data.successRate ?? data.succ),
+        // 嚴格判斷：如果使用者有動過這格( !== undefined)，就以使用者的為主(包含清空)，否則沿用舊資料
+        consultation: parseInput(
+          editedData.consultation !== undefined
+            ? editedData.consultation
+            : existingData.consultation
+        ),
+        surgery: parseInput(
+          editedData.surgery !== undefined
+            ? editedData.surgery
+            : existingData.surgery
+        ),
+        revenue: parseInput(
+          editedData.revenue !== undefined
+            ? editedData.revenue
+            : existingData.revenue
+        ),
+        conversion: parseInput(
+          editedData.conversion !== undefined
+            ? editedData.conversion
+            : existingData.conv
+        ),
+        successRate: parseInput(
+          editedData.successRate !== undefined
+            ? editedData.successRate
+            : existingData.succ
+        ),
         timestamp: Date.now(),
       });
       return true;
@@ -1252,7 +1273,7 @@ export default function App() {
                           yAxisId="left"
                           type="monotone"
                           dataKey="conv"
-                          name="平均轉換率 (%)"
+                          name="歷年平均轉換率 (%)"
                           stroke="#7c3aed"
                           strokeWidth={4}
                           dot={{ r: 5, fill: "#7c3aed" }}
@@ -1261,7 +1282,7 @@ export default function App() {
                           yAxisId="left"
                           type="monotone"
                           dataKey="succ"
-                          name="諮詢成功率 (%)"
+                          name="歷年平均諮詢成功率 (%)"
                           stroke="#06b6d4"
                           strokeWidth={4}
                           dot={{ r: 5, fill: "#06b6d4" }}
@@ -1286,14 +1307,14 @@ export default function App() {
                           <th className="p-4">YoY</th>
                           <th className="p-4">總營業額</th>
                           <th className="p-4">YoY</th>
-                          <th className="p-4">平均 ASP</th>
+                          <th className="p-4">歷年平均 ASP</th>
                           <th className="p-4">YoY</th>
                         </>
                       ) : (
                         <>
-                          <th className="p-4">平均轉換率</th>
+                          <th className="p-4">歷年平均轉換率</th>
                           <th className="p-4">YoY</th>
-                          <th className="p-4">諮詢成功率</th>
+                          <th className="p-4">歷年平均諮詢成功率</th>
                           <th className="p-4">YoY</th>
                         </>
                       )}
@@ -1313,49 +1334,74 @@ export default function App() {
                           {stratView === "macro_A" ? (
                             <>
                               <td className="p-4 text-blue-600">
-                                {y.consultation.toLocaleString()}
+                                {y.consultation === 0 &&
+                                !strategyData.processedHistory.some(
+                                  (d) => d.year === y.name && d.consultation > 0
+                                )
+                                  ? "--"
+                                  : y.consultation.toLocaleString()}
                               </td>
                               <td
                                 className={`p-4 ${
                                   y.yoyCon.includes("-")
                                     ? "text-red-500"
-                                    : "text-green-600"
+                                    : y.yoyCon !== "--"
+                                    ? "text-green-600"
+                                    : "text-slate-400"
                                 }`}
                               >
                                 {y.yoyCon}
                               </td>
                               <td className="p-4 text-emerald-600">
-                                {y.surgery.toLocaleString()}
+                                {y.surgery === 0 &&
+                                !strategyData.processedHistory.some(
+                                  (d) => d.year === y.name && d.surgery > 0
+                                )
+                                  ? "--"
+                                  : y.surgery.toLocaleString()}
                               </td>
                               <td
                                 className={`p-4 ${
                                   y.yoySur.includes("-")
                                     ? "text-red-500"
-                                    : "text-green-600"
+                                    : y.yoySur !== "--"
+                                    ? "text-green-600"
+                                    : "text-slate-400"
                                 }`}
                               >
                                 {y.yoySur}
                               </td>
                               <td className="p-4 text-amber-600">
-                                ${(y.revenue / 10000).toFixed(0)}萬
+                                {y.revenue === 0 &&
+                                !strategyData.processedHistory.some(
+                                  (d) => d.year === y.name && d.revenue > 0
+                                )
+                                  ? "--"
+                                  : `$${(y.revenue / 10000).toFixed(0)}萬`}
                               </td>
                               <td
                                 className={`p-4 ${
                                   y.yoyRev.includes("-")
                                     ? "text-red-500"
-                                    : "text-green-600"
+                                    : y.yoyRev !== "--"
+                                    ? "text-green-600"
+                                    : "text-slate-400"
                                 }`}
                               >
                                 {y.yoyRev}
                               </td>
                               <td className="p-4 text-slate-600">
-                                ${y.asp.toLocaleString()}
+                                {y.asp === 0
+                                  ? "--"
+                                  : `$${y.asp.toLocaleString()}`}
                               </td>
                               <td
                                 className={`p-4 ${
                                   y.yoyAsp.includes("-")
                                     ? "text-red-500"
-                                    : "text-green-600"
+                                    : y.yoyAsp !== "--"
+                                    ? "text-green-600"
+                                    : "text-slate-400"
                                 }`}
                               >
                                 {y.yoyAsp}
@@ -1363,22 +1409,40 @@ export default function App() {
                             </>
                           ) : (
                             <>
-                              <td className="p-4 text-purple-600">{y.conv}%</td>
+                              <td className="p-4 text-purple-600">
+                                {y.conv === 0 &&
+                                !strategyData.processedHistory.some(
+                                  (d) => d.year === y.name && d.conv !== null
+                                )
+                                  ? "--"
+                                  : `${y.conv}%`}
+                              </td>
                               <td
                                 className={`p-4 ${
                                   y.yoyConv.includes("-")
                                     ? "text-red-500"
-                                    : "text-green-600"
+                                    : y.yoyConv !== "--"
+                                    ? "text-green-600"
+                                    : "text-slate-400"
                                 }`}
                               >
                                 {y.yoyConv}
                               </td>
-                              <td className="p-4 text-cyan-600">{y.succ}%</td>
+                              <td className="p-4 text-cyan-600">
+                                {y.succ === 0 &&
+                                !strategyData.processedHistory.some(
+                                  (d) => d.year === y.name && d.succ !== null
+                                )
+                                  ? "--"
+                                  : `${y.succ}%`}
+                              </td>
                               <td
                                 className={`p-4 ${
                                   y.yoySucc.includes("-")
                                     ? "text-red-500"
-                                    : "text-green-600"
+                                    : y.yoySucc !== "--"
+                                    ? "text-green-600"
+                                    : "text-slate-400"
                                 }`}
                               >
                                 {y.yoySucc}
@@ -1558,7 +1622,10 @@ export default function App() {
                               "-"
                             )
                               ? "text-red-500"
-                              : "text-green-600"
+                              : calcYoY(m.curData.conv, m.prevData.conv) !==
+                                "--"
+                              ? "text-green-600"
+                              : "text-slate-400"
                           }`}
                         >
                           {calcYoY(m.curData.conv, m.prevData.conv)}
@@ -1575,7 +1642,10 @@ export default function App() {
                               "-"
                             )
                               ? "text-red-500"
-                              : "text-green-600"
+                              : calcYoY(m.curData.succ, m.prevData.succ) !==
+                                "--"
+                              ? "text-green-600"
+                              : "text-slate-400"
                           }`}
                         >
                           {calcYoY(m.curData.succ, m.prevData.succ)}
@@ -1967,10 +2037,7 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    consultation:
-                                      e.target.value === ""
-                                        ? null
-                                        : e.target.value,
+                                    consultation: e.target.value,
                                   },
                                 }))
                               }
@@ -1995,10 +2062,7 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    surgery:
-                                      e.target.value === ""
-                                        ? null
-                                        : e.target.value,
+                                    surgery: e.target.value,
                                   },
                                 }))
                               }
@@ -2023,10 +2087,7 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    revenue:
-                                      e.target.value === ""
-                                        ? null
-                                        : e.target.value,
+                                    revenue: e.target.value,
                                   },
                                 }))
                               }
@@ -2052,10 +2113,7 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    conversion:
-                                      e.target.value === ""
-                                        ? null
-                                        : e.target.value,
+                                    conversion: e.target.value,
                                   },
                                 }))
                               }
@@ -2084,10 +2142,7 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    successRate:
-                                      e.target.value === ""
-                                        ? null
-                                        : e.target.value,
+                                    successRate: e.target.value,
                                   },
                                 }))
                               }
