@@ -38,6 +38,9 @@ import {
   DollarSign,
   Percent,
   TrendingDown,
+  Lock,
+  Unlock,
+  X,
 } from "lucide-react";
 
 // --- 1. 配置與初始化 ---
@@ -109,12 +112,13 @@ export default function App() {
   const [stratBranch, setStratBranch] = useState(BRANCHES[0]);
   const [stratFilterMode, setStratFilterMode] = useState("aggregate");
 
-  // 維護矩陣狀態
+  // 維護矩陣狀態 (新增編輯鎖定狀態)
   const [maintYear, setMaintYear] = useState(
     new Date().getFullYear().toString()
   );
   const [maintBranch, setMaintBranch] = useState(BRANCHES[0]);
   const [maintGrid, setMaintGrid] = useState({});
+  const [isMaintEditing, setIsMaintEditing] = useState(false);
 
   const [uiStatus, setUiStatus] = useState({
     loading: false,
@@ -141,6 +145,12 @@ export default function App() {
       unsubHist();
     };
   }, []);
+
+  // 💡 修復 Bug 核心：當下拉選單切換時，立刻清空暫存區並強制上鎖
+  useEffect(() => {
+    setMaintGrid({});
+    setIsMaintEditing(false);
+  }, [maintYear, maintBranch]);
 
   const handleMetricToggle = (metricKey) => {
     if (selectedMetrics.includes(metricKey)) {
@@ -348,8 +358,6 @@ export default function App() {
       const prevRev = prevDocs.reduce((acc, cur) => acc + cur.revenue, 0);
       const prevSur = prevDocs.reduce((acc, cur) => acc + cur.surgery, 0);
       const prevCon = prevDocs.reduce((acc, cur) => acc + cur.consultation, 0);
-
-      // 計算品質指標的 YoY
       const prevConv =
         prevDocs.length > 0
           ? parseFloat(
@@ -503,6 +511,8 @@ export default function App() {
       msg: `年度資料更新完成，共 ${count} 個月`,
       type: "success",
     });
+    // 💡 儲存成功後自動上鎖
+    setIsMaintEditing(false);
     setTimeout(() => setUiStatus({ loading: false, msg: "", type: "" }), 3000);
   };
 
@@ -1029,7 +1039,7 @@ export default function App() {
                     年度戰略走勢全覽 (Macro Annual Trend)
                   </h3>
                   <p className="text-xs text-slate-400 font-bold mt-1">
-                    追蹤跨年度產能擴張與諮詢收單品質
+                    追蹤跨年度產能擴張與團隊收單品質
                   </p>
                 </div>
                 <div className="flex gap-4 items-center">
@@ -1183,7 +1193,7 @@ export default function App() {
                 </ResponsiveContainer>
               </div>
 
-              {/* 表格 B: 年度明細與成長率 (動態切換) */}
+              {/* 表格 B: 年度明細與成長率 */}
               <div className="mt-12 overflow-hidden rounded-3xl border border-slate-100">
                 <table className="w-full text-left text-[11px]">
                   <thead className="bg-slate-50 text-slate-400 font-black uppercase">
@@ -1488,7 +1498,8 @@ export default function App() {
         return (
           <div className="space-y-6 animate-in zoom-in-95 duration-300">
             <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
-              <div className="flex flex-wrap gap-4 items-end mb-8">
+              {/* 控制列與鎖定按鈕 */}
+              <div className="flex flex-wrap gap-4 items-end mb-8 border-b border-slate-100 pb-8">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 block mb-2">
                     維護年份
@@ -1521,23 +1532,65 @@ export default function App() {
                     ))}
                   </select>
                 </div>
+
                 <div className="flex-grow"></div>
-                <button
-                  onClick={handleMaintBulkSave}
-                  disabled={uiStatus.loading}
-                  className="bg-blue-600 text-white font-black px-6 py-3 rounded-2xl shadow-lg hover:bg-blue-700 transition-all flex items-center gap-2"
-                >
-                  <Database className="w-4 h-4" /> 批次儲存年度資料 ({maintYear}
-                  )
-                </button>
+
+                {/* 💡 新增：解鎖/編輯防護機制 */}
+                {!isMaintEditing ? (
+                  <button
+                    onClick={() => setIsMaintEditing(true)}
+                    className="bg-slate-800 text-white font-black px-6 py-3 rounded-2xl shadow-lg hover:bg-slate-900 transition-all flex items-center gap-2"
+                  >
+                    <Unlock className="w-4 h-4" /> 解鎖並修改數據
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-3 animate-in fade-in duration-300">
+                    <button
+                      onClick={() => {
+                        setIsMaintEditing(false);
+                        setMaintGrid({});
+                      }}
+                      className="bg-white text-slate-500 border border-slate-200 font-bold px-6 py-3 rounded-2xl hover:bg-slate-50 transition-all flex items-center gap-2"
+                    >
+                      <X className="w-4 h-4" /> 捨棄並上鎖
+                    </button>
+                    <button
+                      onClick={handleMaintBulkSave}
+                      disabled={uiStatus.loading}
+                      className="bg-blue-600 text-white font-black px-6 py-3 rounded-2xl shadow-lg hover:bg-blue-700 transition-all flex items-center gap-2"
+                    >
+                      {uiStatus.loading ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Database className="w-4 h-4" />
+                      )}
+                      批次儲存年度資料 ({maintYear})
+                    </button>
+                  </div>
+                )}
               </div>
+
               {uiStatus.msg && (
                 <p className="mb-4 text-center text-xs font-black text-blue-600 bg-blue-50 p-3 rounded-2xl border border-blue-100">
                   {uiStatus.msg}
                 </p>
               )}
 
-              <div className="overflow-x-auto rounded-3xl border border-slate-50">
+              {/* 💡 修復關鍵：使用 key 綁定強制重繪，並使用受控組件 value 來對接狀態 */}
+              <div
+                key={`${maintYear}-${maintBranch}`}
+                className="overflow-x-auto rounded-3xl border border-slate-50 relative"
+              >
+                {/* 唯讀狀態提示遮罩（視覺效果） */}
+                {!isMaintEditing && (
+                  <div className="absolute inset-0 z-10 pointer-events-none flex justify-center items-center">
+                    <div className="bg-slate-900/5 backdrop-blur-[1px] absolute inset-0"></div>
+                    <div className="bg-white/90 px-6 py-3 rounded-2xl shadow-lg flex items-center gap-2 text-slate-400 font-black text-xs z-20 border border-slate-100">
+                      <Lock className="w-4 h-4" /> 唯讀模式 (點擊右上角解鎖編輯)
+                    </div>
+                  </div>
+                )}
+
                 <table className="w-full text-xs">
                   <thead className="bg-slate-50 text-slate-400 font-black uppercase text-[10px] tracking-widest">
                     <tr>
@@ -1563,10 +1616,13 @@ export default function App() {
                         strategyData.processedHistory.find(
                           (h) => h.id === id
                         ) || {};
+
                       return (
                         <tr
                           key={m}
-                          className="hover:bg-slate-50 transition-colors"
+                          className={`transition-colors ${
+                            isMaintEditing ? "hover:bg-slate-50" : "bg-white"
+                          }`}
                         >
                           <td className="p-5 font-black text-slate-300 text-xl">
                             {m}
@@ -1574,7 +1630,11 @@ export default function App() {
                           <td className="p-5">
                             <input
                               type="number"
-                              defaultValue={existing.consultation}
+                              value={
+                                maintGrid[m]?.consultation ??
+                                existing.consultation ??
+                                ""
+                              }
                               onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
@@ -1584,13 +1644,20 @@ export default function App() {
                                   },
                                 }))
                               }
-                              className="w-24 bg-slate-50 border-none rounded-xl p-2 font-black text-blue-600 focus:ring-2 ring-blue-500"
+                              disabled={!isMaintEditing}
+                              className={`w-24 border-none rounded-xl p-2 font-black text-blue-600 focus:outline-none focus:ring-2 ring-blue-500 transition-all ${
+                                isMaintEditing
+                                  ? "bg-slate-50"
+                                  : "bg-transparent text-center opacity-70"
+                              }`}
                             />
                           </td>
                           <td className="p-5">
                             <input
                               type="number"
-                              defaultValue={existing.surgery}
+                              value={
+                                maintGrid[m]?.surgery ?? existing.surgery ?? ""
+                              }
                               onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
@@ -1600,13 +1667,20 @@ export default function App() {
                                   },
                                 }))
                               }
-                              className="w-24 bg-slate-50 border-none rounded-xl p-2 font-black text-emerald-600 focus:ring-2 ring-emerald-500"
+                              disabled={!isMaintEditing}
+                              className={`w-24 border-none rounded-xl p-2 font-black text-emerald-600 focus:outline-none focus:ring-2 ring-emerald-500 transition-all ${
+                                isMaintEditing
+                                  ? "bg-slate-50"
+                                  : "bg-transparent text-center opacity-70"
+                              }`}
                             />
                           </td>
                           <td className="p-5">
                             <input
                               type="number"
-                              defaultValue={existing.revenue}
+                              value={
+                                maintGrid[m]?.revenue ?? existing.revenue ?? ""
+                              }
                               onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
@@ -1616,14 +1690,21 @@ export default function App() {
                                   },
                                 }))
                               }
-                              className="w-36 bg-slate-50 border-none rounded-xl p-2 font-black text-amber-600 focus:ring-2 ring-amber-500"
+                              disabled={!isMaintEditing}
+                              className={`w-36 border-none rounded-xl p-2 font-black text-amber-600 focus:outline-none focus:ring-2 ring-amber-500 transition-all ${
+                                isMaintEditing
+                                  ? "bg-slate-50"
+                                  : "bg-transparent text-center opacity-70"
+                              }`}
                             />
                           </td>
                           <td className="p-5">
                             <input
                               type="number"
                               step="0.1"
-                              defaultValue={existing.conv}
+                              value={
+                                maintGrid[m]?.conversion ?? existing.conv ?? ""
+                              }
                               onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
@@ -1633,15 +1714,24 @@ export default function App() {
                                   },
                                 }))
                               }
-                              className="w-20 bg-slate-50 border-none rounded-xl p-2 font-black text-purple-600 focus:ring-2 ring-purple-500"
-                            />{" "}
-                            <span className="text-slate-300">%</span>
+                              disabled={!isMaintEditing}
+                              className={`w-20 border-none rounded-xl p-2 font-black text-purple-600 focus:outline-none focus:ring-2 ring-purple-500 transition-all ${
+                                isMaintEditing
+                                  ? "bg-slate-50"
+                                  : "bg-transparent text-center opacity-70"
+                              }`}
+                            />
+                            <span className="text-slate-300 font-bold ml-1">
+                              %
+                            </span>
                           </td>
                           <td className="p-5">
                             <input
                               type="number"
                               step="0.1"
-                              defaultValue={existing.succ}
+                              value={
+                                maintGrid[m]?.successRate ?? existing.succ ?? ""
+                              }
                               onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
@@ -1651,14 +1741,26 @@ export default function App() {
                                   },
                                 }))
                               }
-                              className="w-20 bg-slate-50 border-none rounded-xl p-2 font-black text-cyan-600 focus:ring-2 ring-cyan-500"
-                            />{" "}
-                            <span className="text-slate-300">%</span>
+                              disabled={!isMaintEditing}
+                              className={`w-20 border-none rounded-xl p-2 font-black text-cyan-600 focus:outline-none focus:ring-2 ring-cyan-500 transition-all ${
+                                isMaintEditing
+                                  ? "bg-slate-50"
+                                  : "bg-transparent text-center opacity-70"
+                              }`}
+                            />
+                            <span className="text-slate-300 font-bold ml-1">
+                              %
+                            </span>
                           </td>
                           <td className="p-5 text-center">
                             <button
                               onClick={() => handleMaintSave(m)}
-                              className="bg-white border border-slate-200 hover:bg-slate-900 hover:text-white p-2.5 rounded-xl transition-all"
+                              disabled={!isMaintEditing}
+                              className={`p-2.5 rounded-xl transition-all border ${
+                                isMaintEditing
+                                  ? "bg-white border-slate-200 hover:bg-slate-900 hover:text-white text-slate-600 cursor-pointer"
+                                  : "bg-transparent border-transparent text-slate-300 cursor-not-allowed opacity-50"
+                              }`}
                             >
                               <RefreshCw className="w-4 h-4" />
                             </button>
