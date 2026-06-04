@@ -73,9 +73,24 @@ const METRICS = [
 
 // 輔助函數：計算 YoY
 const calcYoY = (cur, prev) => {
-  if (!prev || prev === 0) return "--";
+  if (
+    prev === null ||
+    prev === undefined ||
+    prev === 0 ||
+    cur === null ||
+    cur === undefined
+  )
+    return "--";
   const change = ((cur - prev) / prev) * 100;
   return (change > 0 ? "+" : "") + change.toFixed(1) + "%";
+};
+
+// 💡 核心輔助函數：計算精準平均（忽略 Null，包含 0）
+const getAvg = (docs, key) => {
+  const validDocs = docs.filter((d) => d[key] !== null && d[key] !== undefined);
+  if (validDocs.length === 0) return 0;
+  const sum = validDocs.reduce((acc, cur) => acc + Number(cur[key]), 0);
+  return parseFloat((sum / validDocs.length).toFixed(1));
 };
 
 export default function App() {
@@ -313,46 +328,57 @@ export default function App() {
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
-  // --- 5. 戰略看板數據矩陣 & 💡 核心：歷年歷史淡旺季常態模型大腦 ---
+  // --- 5. 戰略看板數據矩陣 (整合 Null 精準平均防護) ---
   const strategyData = useMemo(() => {
+    // 💡 取出資料時，嚴格保留 null，不自動補 0
     const processedHistory = historyData.map((d) => ({
       ...d,
-      revenue: parseFloat(d.revenue || 0),
-      consultation: parseInt(d.consultation || 0),
-      surgery: parseInt(d.surgery || 0),
-      conv: parseFloat(d.conversion || 0),
-      succ: parseFloat(d.successRate || 0),
-      asp: d.surgery > 0 ? Math.round(d.revenue / d.surgery) : 0,
+      revenue:
+        d.revenue === null || d.revenue === undefined || d.revenue === ""
+          ? null
+          : Number(d.revenue),
+      consultation:
+        d.consultation === null ||
+        d.consultation === undefined ||
+        d.consultation === ""
+          ? null
+          : Number(d.consultation),
+      surgery:
+        d.surgery === null || d.surgery === undefined || d.surgery === ""
+          ? null
+          : Number(d.surgery),
+      conv:
+        d.conversion === null ||
+        d.conversion === undefined ||
+        d.conversion === ""
+          ? null
+          : Number(d.conversion),
+      succ:
+        d.successRate === null ||
+        d.successRate === undefined ||
+        d.successRate === ""
+          ? null
+          : Number(d.successRate),
     }));
 
-    // 1. 常態歷史趨勢（歷年大局）
+    // 1. 年度趨勢
     const yearlyTrend = YEARS.map((y) => {
       const yearDocs = processedHistory.filter(
         (d) =>
           d.year === y &&
           (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
       );
-      const curRev = yearDocs.reduce((acc, cur) => acc + cur.revenue, 0);
-      const curSur = yearDocs.reduce((acc, cur) => acc + cur.surgery, 0);
-      const curCon = yearDocs.reduce((acc, cur) => acc + cur.consultation, 0);
-      const avgConv =
-        yearDocs.length > 0
-          ? parseFloat(
-              (
-                yearDocs.reduce((acc, cur) => acc + cur.conv, 0) /
-                yearDocs.length
-              ).toFixed(1)
-            )
-          : 0;
-      const avgSucc =
-        yearDocs.length > 0
-          ? parseFloat(
-              (
-                yearDocs.reduce((acc, cur) => acc + cur.succ, 0) /
-                yearDocs.length
-              ).toFixed(1)
-            )
-          : 0;
+
+      const curRev = yearDocs.reduce((acc, cur) => acc + (cur.revenue || 0), 0);
+      const curSur = yearDocs.reduce((acc, cur) => acc + (cur.surgery || 0), 0);
+      const curCon = yearDocs.reduce(
+        (acc, cur) => acc + (cur.consultation || 0),
+        0
+      );
+
+      // 💡 採用精準的 getAvg 計算，完美貼合 CRM
+      const avgConv = getAvg(yearDocs, "conv");
+      const avgSucc = getAvg(yearDocs, "succ");
       const asp = curSur > 0 ? Math.round(curRev / curSur) : 0;
 
       const prevYear = (parseInt(y) - 1).toString();
@@ -361,30 +387,20 @@ export default function App() {
           d.year === prevYear &&
           (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
       );
-      const prevRev = prevDocs.reduce((acc, cur) => acc + cur.revenue, 0);
-      const prevSur = prevDocs.reduce((acc, cur) => acc + cur.surgery, 0);
-      const prevDocsCon = prevDocs.reduce(
-        (acc, cur) => acc + cur.consultation,
+      const prevRev = prevDocs.reduce(
+        (acc, cur) => acc + (cur.revenue || 0),
         0
       );
-      const prevConv =
-        prevDocs.length > 0
-          ? parseFloat(
-              (
-                prevDocs.reduce((acc, cur) => acc + cur.conv, 0) /
-                prevDocs.length
-              ).toFixed(1)
-            )
-          : 0;
-      const prevSucc =
-        prevDocs.length > 0
-          ? parseFloat(
-              (
-                prevDocs.reduce((acc, cur) => acc + cur.succ, 0) /
-                prevDocs.length
-              ).toFixed(1)
-            )
-          : 0;
+      const prevSur = prevDocs.reduce(
+        (acc, cur) => acc + (cur.surgery || 0),
+        0
+      );
+      const prevDocsCon = prevDocs.reduce(
+        (acc, cur) => acc + (cur.consultation || 0),
+        0
+      );
+      const prevConv = getAvg(prevDocs, "conv");
+      const prevSucc = getAvg(prevDocs, "succ");
       const prevAsp = prevSur > 0 ? Math.round(prevRev / prevSur) : 0;
 
       return {
@@ -404,7 +420,7 @@ export default function App() {
       };
     });
 
-    // 2. 月度 YoY 戰術對比
+    // 2. 月度 YoY 對比
     const prevYear = (parseInt(stratBaseYear) - 1).toString();
     const monthlyYoY = MONTHS.map((m) => {
       const cur =
@@ -413,22 +429,27 @@ export default function App() {
             d.year === stratBaseYear &&
             d.month === m &&
             (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
-        ) || {};
+        ) || null;
       const prev =
         processedHistory.find(
           (d) =>
             d.year === prevYear &&
             d.month === m &&
             (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
-        ) || {};
+        ) || null;
 
       const getVal = (obj, key) => {
-        if (key === "revenue") return obj.revenue || 0;
-        if (key === "consultation") return obj.consultation || 0;
-        if (key === "surgery") return obj.surgery || 0;
-        if (key === "conversion") return obj.conv || 0;
-        if (key === "success") return obj.succ || 0;
-        return 0;
+        if (!obj) return null;
+        if (key === "revenue")
+          return obj.revenue !== undefined ? obj.revenue : null;
+        if (key === "consultation")
+          return obj.consultation !== undefined ? obj.consultation : null;
+        if (key === "surgery")
+          return obj.surgery !== undefined ? obj.surgery : null;
+        if (key === "conversion")
+          return obj.conv !== undefined ? obj.conv : null;
+        if (key === "success") return obj.succ !== undefined ? obj.succ : null;
+        return null;
       };
 
       const cV = getVal(cur, stratMetric);
@@ -439,13 +460,13 @@ export default function App() {
         baseVal: cV,
         prevVal: pV,
         yoy: calcYoY(cV, pV),
-        curData: cur,
-        prevData: prev,
+        curData: cur || {},
+        prevData: prev || {},
       };
     });
 
-    // 💡 3. 鋼鐵律模型：抗雜訊除數演算法剔除無效月份
-    const currentYearStr = new Date().getFullYear().toString(); // "2026"
+    // 3. 歷年季節常態模型大腦 (精準排除無效 Null 月份)
+    const currentYearStr = new Date().getFullYear().toString();
     const completedYearDocs = processedHistory.filter(
       (d) =>
         d.year < currentYearStr &&
@@ -455,28 +476,31 @@ export default function App() {
     const seasonalityBaseline = MONTHS.map((m) => {
       const targetMonthDocs = completedYearDocs.filter((d) => d.month === m);
 
-      // 💡 抗雜訊過濾：只計算有實質營運紀錄（諮詢/營業額/手術任一大於 0）的月份
-      const validDocs = targetMonthDocs.filter(
-        (d) => d.consultation > 0 || d.revenue > 0 || d.surgery > 0
-      );
-      const yearCount = validDocs.length || 1; // 避免分母為0
+      const avgConsultation = getAvg(targetMonthDocs, "consultation");
+      const avgSurgery = getAvg(targetMonthDocs, "surgery");
+      const avgConversion = getAvg(targetMonthDocs, "conv");
+      const avgSuccess = getAvg(targetMonthDocs, "succ");
 
-      const totalCon = validDocs.reduce(
-        (acc, cur) => acc + cur.consultation,
+      const validSurRevDocs = targetMonthDocs.filter(
+        (d) => d.surgery !== null && d.revenue !== null
+      );
+      const sumSur = validSurRevDocs.reduce(
+        (acc, cur) => acc + Number(cur.surgery),
         0
       );
-      const totalSur = validDocs.reduce((acc, cur) => acc + cur.surgery, 0);
-      const totalRev = validDocs.reduce((acc, cur) => acc + cur.revenue, 0);
-      const sumConv = validDocs.reduce((acc, cur) => acc + cur.conv, 0);
-      const sumSucc = validDocs.reduce((acc, cur) => acc + cur.succ, 0);
+      const sumRev = validSurRevDocs.reduce(
+        (acc, cur) => acc + Number(cur.revenue),
+        0
+      );
+      const avgASP = sumSur > 0 ? Math.round(sumRev / sumSur) : 0;
 
       return {
         name: `${m}月`,
-        avgConsultation: Math.round(totalCon / yearCount),
-        avgSurgery: Math.round(totalSur / yearCount),
-        avgConversion: parseFloat((sumConv / yearCount).toFixed(1)),
-        avgSuccess: parseFloat((sumSucc / yearCount).toFixed(1)),
-        avgASP: totalSur > 0 ? Math.round(totalRev / totalSur) : 0,
+        avgConsultation: Math.round(avgConsultation),
+        avgSurgery: Math.round(avgSurgery),
+        avgConversion: avgConversion,
+        avgSuccess: avgSuccess,
+        avgASP: avgASP,
       };
     });
 
@@ -524,17 +548,22 @@ export default function App() {
       maintGrid[m] ||
       strategyData.processedHistory.find((h) => h.id === id) ||
       {};
+
+    // 💡 存檔時，強制將空白轉換為 null
+    const parseInput = (val) =>
+      val === "" || val === null || val === undefined ? null : Number(val);
+
     try {
       await setDoc(doc(db, "wishvision_monthly_history", id), {
         id,
         year: maintYear,
         month: m,
         branch: maintBranch,
-        consultation: parseInt(data.consultation || 0),
-        surgery: parseInt(data.surgery || 0),
-        revenue: parseInt(data.revenue || 0),
-        conversion: parseFloat(data.conversion || data.conv || 0),
-        successRate: parseFloat(data.successRate || data.succ || 0),
+        consultation: parseInput(data.consultation),
+        surgery: parseInput(data.surgery),
+        revenue: parseInput(data.revenue),
+        conversion: parseInput(data.conversion ?? data.conv),
+        successRate: parseInput(data.successRate ?? data.succ),
         timestamp: Date.now(),
       });
       return true;
@@ -1114,7 +1143,7 @@ export default function App() {
                 )}
               </div>
               <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg border border-blue-100">
-                雷達已啟動：歷年縱深數據加權模組
+                雷達已啟動：歷年縱深數據加權模組 (抗 Null 值干擾)
               </span>
             </div>
 
@@ -1442,6 +1471,7 @@ export default function App() {
                     <Line
                       type="monotone"
                       dataKey="baseVal"
+                      connectNulls={false}
                       name={`${stratBaseYear}年度 (基準)`}
                       stroke="#7c3aed"
                       strokeWidth={5}
@@ -1450,6 +1480,7 @@ export default function App() {
                     <Line
                       type="monotone"
                       dataKey="prevVal"
+                      connectNulls={false}
                       name={`${parseInt(stratBaseYear) - 1}年度 (對比)`}
                       stroke="#cbd5e1"
                       strokeWidth={3}
@@ -1485,12 +1516,16 @@ export default function App() {
                           {m.name}
                         </td>
                         <td className="p-4 text-slate-900 font-black text-sm">
-                          {stratMetric === "revenue"
+                          {m.baseVal === null
+                            ? "--"
+                            : stratMetric === "revenue"
                             ? `$${(m.baseVal / 10000).toFixed(0)}萬`
                             : m.baseVal}
                         </td>
                         <td className="p-4 text-slate-400">
-                          {stratMetric === "revenue"
+                          {m.prevVal === null
+                            ? "--"
+                            : stratMetric === "revenue"
                             ? `$${(m.prevVal / 10000).toFixed(0)}萬`
                             : m.prevVal}
                         </td>
@@ -1498,18 +1533,24 @@ export default function App() {
                           className={`p-4 flex items-center gap-1 ${
                             m.yoy.includes("-")
                               ? "text-red-500"
-                              : "text-green-600"
+                              : m.yoy !== "--"
+                              ? "text-green-600"
+                              : "text-slate-400"
                           }`}
                         >
-                          {m.yoy.includes("-") ? (
-                            <TrendingDown className="w-3 h-3" />
-                          ) : (
-                            <ArrowUpRight className="w-3 h-3" />
-                          )}
+                          {m.yoy !== "--" &&
+                            (m.yoy.includes("-") ? (
+                              <TrendingDown className="w-3 h-3" />
+                            ) : (
+                              <ArrowUpRight className="w-3 h-3" />
+                            ))}
                           {m.yoy}
                         </td>
                         <td className="p-4 text-purple-600">
-                          {m.curData.conv || 0}%
+                          {m.curData.conv !== undefined &&
+                          m.curData.conv !== null
+                            ? `${m.curData.conv}%`
+                            : "--"}
                         </td>
                         <td
                           className={`p-4 ${
@@ -1522,8 +1563,11 @@ export default function App() {
                         >
                           {calcYoY(m.curData.conv, m.prevData.conv)}
                         </td>
-                        <td className="p-4 text-blue-600">
-                          {m.curData.succ || 0}%
+                        <td className="p-4 text-cyan-600">
+                          {m.curData.succ !== undefined &&
+                          m.curData.succ !== null
+                            ? `${m.curData.succ}%`
+                            : "--"}
                         </td>
                         <td
                           className={`p-4 ${
@@ -1572,7 +1616,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 說明展開盒 */}
                 {showInfoVolume && (
                   <div className="mb-6 p-4 bg-blue-50/80 border border-blue-100 rounded-2xl text-xs text-blue-800 font-bold leading-relaxed animate-in fade-in duration-300">
                     <p className="flex items-center gap-1 text-blue-900 font-black mb-1">
@@ -1650,7 +1693,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 說明展開盒 */}
                 {showInfoQuality && (
                   <div className="mb-6 p-4 bg-purple-50/80 border border-purple-100 rounded-2xl text-xs text-purple-800 font-bold leading-relaxed animate-in fade-in duration-300">
                     <p className="flex items-center gap-1 text-purple-900 font-black mb-1">
@@ -1728,7 +1770,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 說明展開盒 */}
                 {showInfoFinance && (
                   <div className="mb-6 p-4 bg-amber-50/80 border border-amber-100 rounded-2xl text-xs text-amber-800 font-bold leading-relaxed animate-in fade-in duration-300">
                     <p className="flex items-center gap-1 text-amber-900 font-black mb-1">
@@ -1917,16 +1958,19 @@ export default function App() {
                             <input
                               type="number"
                               value={
-                                maintGrid[m]?.consultation ??
-                                existing.consultation ??
-                                ""
+                                (maintGrid[m]?.consultation !== undefined
+                                  ? maintGrid[m].consultation
+                                  : existing.consultation) ?? ""
                               }
                               onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    consultation: e.target.value,
+                                    consultation:
+                                      e.target.value === ""
+                                        ? null
+                                        : e.target.value,
                                   },
                                 }))
                               }
@@ -1942,14 +1986,19 @@ export default function App() {
                             <input
                               type="number"
                               value={
-                                maintGrid[m]?.surgery ?? existing.surgery ?? ""
+                                (maintGrid[m]?.surgery !== undefined
+                                  ? maintGrid[m].surgery
+                                  : existing.surgery) ?? ""
                               }
                               onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    surgery: e.target.value,
+                                    surgery:
+                                      e.target.value === ""
+                                        ? null
+                                        : e.target.value,
                                   },
                                 }))
                               }
@@ -1965,14 +2014,19 @@ export default function App() {
                             <input
                               type="number"
                               value={
-                                maintGrid[m]?.revenue ?? existing.revenue ?? ""
+                                (maintGrid[m]?.revenue !== undefined
+                                  ? maintGrid[m].revenue
+                                  : existing.revenue) ?? ""
                               }
                               onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    revenue: e.target.value,
+                                    revenue:
+                                      e.target.value === ""
+                                        ? null
+                                        : e.target.value,
                                   },
                                 }))
                               }
@@ -1989,14 +2043,19 @@ export default function App() {
                               type="number"
                               step="0.1"
                               value={
-                                maintGrid[m]?.conversion ?? existing.conv ?? ""
+                                (maintGrid[m]?.conversion !== undefined
+                                  ? maintGrid[m].conversion
+                                  : existing.conv) ?? ""
                               }
                               onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    conversion: e.target.value,
+                                    conversion:
+                                      e.target.value === ""
+                                        ? null
+                                        : e.target.value,
                                   },
                                 }))
                               }
@@ -2016,14 +2075,19 @@ export default function App() {
                               type="number"
                               step="0.1"
                               value={
-                                maintGrid[m]?.successRate ?? existing.succ ?? ""
+                                (maintGrid[m]?.successRate !== undefined
+                                  ? maintGrid[m].successRate
+                                  : existing.succ) ?? ""
                               }
                               onChange={(e) =>
                                 setMaintGrid((prev) => ({
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    successRate: e.target.value,
+                                    successRate:
+                                      e.target.value === ""
+                                        ? null
+                                        : e.target.value,
                                   },
                                 }))
                               }
