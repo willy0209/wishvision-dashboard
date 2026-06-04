@@ -114,7 +114,7 @@ export default function App() {
   const [stratBranch, setStratBranch] = useState(BRANCHES[0]);
   const [stratFilterMode, setStratFilterMode] = useState("aggregate");
 
-  // 💡 說明視窗開關狀態
+  // 說明視窗開關狀態
   const [showInfoVolume, setShowInfoVolume] = useState(false);
   const [showInfoQuality, setShowInfoQuality] = useState(false);
   const [showInfoFinance, setShowInfoFinance] = useState(false);
@@ -313,7 +313,7 @@ export default function App() {
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
-  // --- 5. 戰略看板數據矩陣 & 💡 核心：十年歷史淡旺季常態模型大腦 ---
+  // --- 5. 戰略看板數據矩陣 & 💡 核心：歷年歷史淡旺季常態模型大腦 ---
   const strategyData = useMemo(() => {
     const processedHistory = historyData.map((d) => ({
       ...d,
@@ -444,7 +444,7 @@ export default function App() {
       };
     });
 
-    // 💡 3. 鋼鐵律模型：淬鍊 2017-2025 已完結完整年度之「季節性常態常規」
+    // 💡 3. 鋼鐵律模型：抗雜訊除數演算法剔除無效月份
     const currentYearStr = new Date().getFullYear().toString(); // "2026"
     const completedYearDocs = processedHistory.filter(
       (d) =>
@@ -454,22 +454,21 @@ export default function App() {
 
     const seasonalityBaseline = MONTHS.map((m) => {
       const targetMonthDocs = completedYearDocs.filter((d) => d.month === m);
-      const yearCount = targetMonthDocs.length || 1;
 
-      const totalCon = targetMonthDocs.reduce(
+      // 💡 抗雜訊過濾：只計算有實質營運紀錄（諮詢/營業額/手術任一大於 0）的月份
+      const validDocs = targetMonthDocs.filter(
+        (d) => d.consultation > 0 || d.revenue > 0 || d.surgery > 0
+      );
+      const yearCount = validDocs.length || 1; // 避免分母為0
+
+      const totalCon = validDocs.reduce(
         (acc, cur) => acc + cur.consultation,
         0
       );
-      const totalSur = targetMonthDocs.reduce(
-        (acc, cur) => acc + cur.surgery,
-        0
-      );
-      const totalRev = targetMonthDocs.reduce(
-        (acc, cur) => acc + cur.revenue,
-        0
-      );
-      const sumConv = targetMonthDocs.reduce((acc, cur) => acc + cur.conv, 0);
-      const sumSucc = targetMonthDocs.reduce((acc, cur) => acc + cur.succ, 0);
+      const totalSur = validDocs.reduce((acc, cur) => acc + cur.surgery, 0);
+      const totalRev = validDocs.reduce((acc, cur) => acc + cur.revenue, 0);
+      const sumConv = validDocs.reduce((acc, cur) => acc + cur.conv, 0);
+      const sumSucc = validDocs.reduce((acc, cur) => acc + cur.succ, 0);
 
       return {
         name: `${m}月`,
@@ -1019,6 +1018,56 @@ export default function App() {
                   </ResponsiveContainer>
                 </div>
               </div>
+
+              {/* 每日紀錄詳細日誌 */}
+              <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
+                <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                    每日紀錄詳細日誌
+                  </h3>
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  <table className="w-full text-[11px] text-left">
+                    <thead className="bg-slate-50 text-slate-400 sticky top-0 font-bold uppercase">
+                      <tr>
+                        <th className="p-4">日期</th>
+                        <th className="p-4">分院</th>
+                        <th className="p-4 text-blue-600">諮詢</th>
+                        <th className="p-4 text-emerald-600">手術</th>
+                        <th className="p-4">下月預約</th>
+                        <th className="p-4">評論</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {dailyMetrics.dailyLogs.map((r, i) => (
+                        <tr
+                          key={i}
+                          className="hover:bg-slate-50 transition-colors"
+                        >
+                          <td className="p-4 font-bold text-slate-400">
+                            {r.date.slice(5)}
+                          </td>
+                          <td className="p-4 font-black text-slate-900">
+                            {r.branch}
+                          </td>
+                          <td className="p-4 font-black text-blue-600">
+                            {r.currentC}
+                          </td>
+                          <td className="p-4 font-black text-emerald-600">
+                            {r.currentS}
+                          </td>
+                          <td className="p-4 text-slate-500 font-bold">
+                            {r.nextC} / {r.nextS}
+                          </td>
+                          <td className="p-4 text-amber-600 font-black">
+                            {r.reviews}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
         );
@@ -1065,7 +1114,7 @@ export default function App() {
                 )}
               </div>
               <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg border border-blue-100">
-                雷達已啟動：十年縱深數據加權模組
+                雷達已啟動：歷年縱深數據加權模組
               </span>
             </div>
 
@@ -1494,16 +1543,15 @@ export default function App() {
               </div>
             </div>
 
-            {/* 💡 3. 全新重磅加掛：十年季節性常態大腦核心區塊 (Seasonality Baselines) */}
+            {/* 💡 3. 歷年季節性常態大腦核心區塊 */}
             <div className="border-t-4 border-dashed border-slate-200 pt-8 space-y-8">
               <div className="bg-slate-900 text-white p-6 rounded-3xl flex justify-between items-center shadow-lg">
                 <div>
                   <h4 className="text-base font-black tracking-wide">
-                    📊 ✨ 十年動態季節性常態基線 (Seasonality Baseline Matrix)
+                    📊 ✨ 歷年動態季節性常態基線 (Seasonality Baseline Matrix)
                   </h4>
                   <p className="text-[11px] text-slate-400 mt-1 font-semibold">
-                    系統已自動鎖定 2017-2025 已完結年度，即時剔除未完結之 2026
-                    年度數據干擾
+                    系統已自動鎖定已完結年度，即時剔除未完結之本年度數據干擾
                   </p>
                 </div>
               </div>
@@ -1568,7 +1616,7 @@ export default function App() {
                       <Line
                         type="monotone"
                         dataKey="avgConsultation"
-                        name="十年平均諮詢量"
+                        name="歷年平均諮詢量"
                         stroke="#2563eb"
                         strokeWidth={3}
                         dot={{ r: 4 }}
@@ -1576,7 +1624,7 @@ export default function App() {
                       <Line
                         type="monotone"
                         dataKey="avgSurgery"
-                        name="十年平均手術量"
+                        name="歷年平均手術量"
                         stroke="#16a34a"
                         strokeWidth={3}
                         dot={{ r: 4 }}
@@ -1591,7 +1639,7 @@ export default function App() {
                 <div className="flex justify-between items-center mb-6">
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-black text-slate-800">
-                      【品質視角】歷年每月平均轉化率與諮詢成功率常態
+                      【品質視角】歷年每月平均轉換率與諮詢成功率常態
                     </h3>
                     <button
                       onClick={() => setShowInfoQuality(!showInfoQuality)}
@@ -1646,7 +1694,7 @@ export default function App() {
                       <Line
                         type="monotone"
                         dataKey="avgConversion"
-                        name="十年平均轉換率 (%)"
+                        name="歷年平均轉換率 (%)"
                         stroke="#7c3aed"
                         strokeWidth={3}
                         dot={{ r: 4 }}
@@ -1654,7 +1702,7 @@ export default function App() {
                       <Line
                         type="monotone"
                         dataKey="avgSuccess"
-                        name="十年平均諮詢成功率 (%)"
+                        name="歷年平均諮詢成功率 (%)"
                         stroke="#06b6d4"
                         strokeWidth={3}
                         dot={{ r: 4 }}
@@ -1723,7 +1771,7 @@ export default function App() {
                       />
                       <Bar
                         dataKey="avgASP"
-                        name="十年平均客單價 (NT$)"
+                        name="歷年平均客單價 (NT$)"
                         fill="#fbbf24"
                         radius={[8, 8, 0, 0]}
                         barSize={35}
@@ -1739,6 +1787,7 @@ export default function App() {
         return (
           <div className="space-y-6 animate-in zoom-in-95 duration-300">
             <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
+              {/* 控制列與鎖定按鈕 */}
               <div className="flex flex-wrap gap-4 items-end mb-8 border-b border-slate-100 pb-8">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 block mb-2">
@@ -1772,7 +1821,9 @@ export default function App() {
                     ))}
                   </select>
                 </div>
+
                 <div className="flex-grow"></div>
+
                 {!isMaintEditing ? (
                   <button
                     onClick={() => setIsMaintEditing(true)}
@@ -1800,12 +1851,13 @@ export default function App() {
                         <RefreshCw className="w-4 h-4 animate-spin" />
                       ) : (
                         <Database className="w-4 h-4" />
-                      )}{" "}
+                      )}
                       批次儲存年度資料 ({maintYear})
                     </button>
                   </div>
                 )}
               </div>
+
               {uiStatus.msg && (
                 <p className="mb-4 text-center text-xs font-black text-blue-600 bg-blue-50 p-3 rounded-2xl border border-blue-100">
                   {uiStatus.msg}
@@ -1850,6 +1902,7 @@ export default function App() {
                         strategyData.processedHistory.find(
                           (h) => h.id === id
                         ) || {};
+
                       return (
                         <tr
                           key={m}
@@ -1953,7 +2006,7 @@ export default function App() {
                                   ? "bg-slate-50"
                                   : "bg-transparent text-center opacity-70"
                               }`}
-                            />{" "}
+                            />
                             <span className="text-slate-300 font-bold ml-1">
                               %
                             </span>
@@ -1980,7 +2033,7 @@ export default function App() {
                                   ? "bg-slate-50"
                                   : "bg-transparent text-center opacity-70"
                               }`}
-                            />{" "}
+                            />
                             <span className="text-slate-300 font-bold ml-1">
                               %
                             </span>
