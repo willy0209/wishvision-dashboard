@@ -41,6 +41,8 @@ import {
   Lock,
   Unlock,
   X,
+  HelpCircle,
+  Info,
 } from "lucide-react";
 
 // --- 1. 配置與初始化 ---
@@ -112,7 +114,12 @@ export default function App() {
   const [stratBranch, setStratBranch] = useState(BRANCHES[0]);
   const [stratFilterMode, setStratFilterMode] = useState("aggregate");
 
-  // 維護矩陣狀態 (新增編輯鎖定狀態)
+  // 💡 說明視窗開關狀態
+  const [showInfoVolume, setShowInfoVolume] = useState(false);
+  const [showInfoQuality, setShowInfoQuality] = useState(false);
+  const [showInfoFinance, setShowInfoFinance] = useState(false);
+
+  // 維護矩陣狀態
   const [maintYear, setMaintYear] = useState(
     new Date().getFullYear().toString()
   );
@@ -146,7 +153,6 @@ export default function App() {
     };
   }, []);
 
-  // 💡 修復 Bug 核心：當下拉選單切換時，立刻清空暫存區並強制上鎖
   useEffect(() => {
     setMaintGrid({});
     setIsMaintEditing(false);
@@ -307,7 +313,7 @@ export default function App() {
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
-  // --- 5. 戰略看板數據矩陣 ---
+  // --- 5. 戰略看板數據矩陣 & 💡 核心：十年歷史淡旺季常態模型大腦 ---
   const strategyData = useMemo(() => {
     const processedHistory = historyData.map((d) => ({
       ...d,
@@ -319,8 +325,8 @@ export default function App() {
       asp: d.surgery > 0 ? Math.round(d.revenue / d.surgery) : 0,
     }));
 
-    // 1. 年度趨勢
-    const yearlyTrend = YEARS.map((y, idx) => {
+    // 1. 常態歷史趨勢（歷年大局）
+    const yearlyTrend = YEARS.map((y) => {
       const yearDocs = processedHistory.filter(
         (d) =>
           d.year === y &&
@@ -357,7 +363,10 @@ export default function App() {
       );
       const prevRev = prevDocs.reduce((acc, cur) => acc + cur.revenue, 0);
       const prevSur = prevDocs.reduce((acc, cur) => acc + cur.surgery, 0);
-      const prevCon = prevDocs.reduce((acc, cur) => acc + cur.consultation, 0);
+      const prevDocsCon = prevDocs.reduce(
+        (acc, cur) => acc + cur.consultation,
+        0
+      );
       const prevConv =
         prevDocs.length > 0
           ? parseFloat(
@@ -388,14 +397,14 @@ export default function App() {
         asp: asp,
         yoyRev: calcYoY(curRev, prevRev),
         yoySur: calcYoY(curSur, prevSur),
-        yoyCon: calcYoY(curCon, prevCon),
+        yoyCon: calcYoY(curCon, prevDocsCon),
         yoyConv: calcYoY(avgConv, prevConv),
         yoySucc: calcYoY(avgSucc, prevSucc),
         yoyAsp: calcYoY(asp, prevAsp),
       };
     });
 
-    // 2. 月度 YoY 對比
+    // 2. 月度 YoY 戰術對比
     const prevYear = (parseInt(stratBaseYear) - 1).toString();
     const monthlyYoY = MONTHS.map((m) => {
       const cur =
@@ -435,7 +444,44 @@ export default function App() {
       };
     });
 
-    return { yearlyTrend, monthlyYoY, processedHistory };
+    // 💡 3. 鋼鐵律模型：淬鍊 2017-2025 已完結完整年度之「季節性常態常規」
+    const currentYearStr = new Date().getFullYear().toString(); // "2026"
+    const completedYearDocs = processedHistory.filter(
+      (d) =>
+        d.year < currentYearStr &&
+        (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
+    );
+
+    const seasonalityBaseline = MONTHS.map((m) => {
+      const targetMonthDocs = completedYearDocs.filter((d) => d.month === m);
+      const yearCount = targetMonthDocs.length || 1;
+
+      const totalCon = targetMonthDocs.reduce(
+        (acc, cur) => acc + cur.consultation,
+        0
+      );
+      const totalSur = targetMonthDocs.reduce(
+        (acc, cur) => acc + cur.surgery,
+        0
+      );
+      const totalRev = targetMonthDocs.reduce(
+        (acc, cur) => acc + cur.revenue,
+        0
+      );
+      const sumConv = targetMonthDocs.reduce((acc, cur) => acc + cur.conv, 0);
+      const sumSucc = targetMonthDocs.reduce((acc, cur) => acc + cur.succ, 0);
+
+      return {
+        name: `${m}月`,
+        avgConsultation: Math.round(totalCon / yearCount),
+        avgSurgery: Math.round(totalSur / yearCount),
+        avgConversion: parseFloat((sumConv / yearCount).toFixed(1)),
+        avgSuccess: parseFloat((sumSucc / yearCount).toFixed(1)),
+        avgASP: totalSur > 0 ? Math.round(totalRev / totalSur) : 0,
+      };
+    });
+
+    return { yearlyTrend, monthlyYoY, processedHistory, seasonalityBaseline };
   }, [historyData, stratFilterMode, stratBranch, stratBaseYear, stratMetric]);
 
   // --- 6. 事件處理 ---
@@ -511,7 +557,6 @@ export default function App() {
       msg: `年度資料更新完成，共 ${count} 個月`,
       type: "success",
     });
-    // 💡 儲存成功後自動上鎖
     setIsMaintEditing(false);
     setTimeout(() => setUiStatus({ loading: false, msg: "", type: "" }), 3000);
   };
@@ -974,62 +1019,56 @@ export default function App() {
                   </ResponsiveContainer>
                 </div>
               </div>
-
-              {/* 每日紀錄詳細日誌 */}
-              <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
-                <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">
-                    每日紀錄詳細日誌
-                  </h3>
-                </div>
-                <div className="max-h-64 overflow-y-auto">
-                  <table className="w-full text-[11px] text-left">
-                    <thead className="bg-slate-50 text-slate-400 sticky top-0 font-bold uppercase">
-                      <tr>
-                        <th className="p-4">日期</th>
-                        <th className="p-4">分院</th>
-                        <th className="p-4 text-blue-600">諮詢</th>
-                        <th className="p-4 text-emerald-600">手術</th>
-                        <th className="p-4">下月預約</th>
-                        <th className="p-4">評論</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {dailyMetrics.dailyLogs.map((r, i) => (
-                        <tr
-                          key={i}
-                          className="hover:bg-slate-50 transition-colors"
-                        >
-                          <td className="p-4 font-bold text-slate-400">
-                            {r.date.slice(5)}
-                          </td>
-                          <td className="p-4 font-black text-slate-900">
-                            {r.branch}
-                          </td>
-                          <td className="p-4 font-black text-blue-600">
-                            {r.currentC}
-                          </td>
-                          <td className="p-4 font-black text-emerald-600">
-                            {r.currentS}
-                          </td>
-                          <td className="p-4 text-slate-500 font-bold">
-                            {r.nextC} / {r.nextS}
-                          </td>
-                          <td className="p-4 text-amber-600 font-black">
-                            {r.reviews}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
             </div>
           </div>
         );
       case "strategy":
         return (
           <div className="space-y-8 animate-in slide-in-from-bottom duration-500">
+            {/* 全局主控制列 */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-wrap justify-between items-center gap-4">
+              <div className="flex gap-4 items-center">
+                <div className="bg-slate-100 p-1 rounded-xl flex gap-1 text-[11px] font-black uppercase">
+                  <button
+                    onClick={() => setStratFilterMode("aggregate")}
+                    className={`px-5 py-2.5 rounded-xl transition-all ${
+                      stratFilterMode === "aggregate"
+                        ? "bg-white text-slate-900 shadow-md"
+                        : "text-slate-400"
+                    }`}
+                  >
+                    全院加總
+                  </button>
+                  <button
+                    onClick={() => setStratFilterMode("compare")}
+                    className={`px-5 py-2.5 rounded-xl transition-all ${
+                      stratFilterMode === "compare"
+                        ? "bg-white text-slate-900 shadow-md"
+                        : "text-slate-400"
+                    }`}
+                  >
+                    單一分院
+                  </button>
+                </div>
+                {stratFilterMode === "compare" && (
+                  <select
+                    value={stratBranch}
+                    onChange={(e) => setStratBranch(e.target.value)}
+                    className="bg-slate-100 border-none rounded-2xl px-5 py-2.5 text-xs font-black"
+                  >
+                    {BRANCHES.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg border border-blue-100">
+                雷達已啟動：十年縱深數據加權模組
+              </span>
+            </div>
+
             {/* 1. 年度大局走勢 */}
             <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
               <div className="flex flex-wrap justify-between items-end gap-6 mb-8">
@@ -1042,65 +1081,27 @@ export default function App() {
                     追蹤跨年度產能擴張與團隊收單品質
                   </p>
                 </div>
-                <div className="flex gap-4 items-center">
-                  <div className="bg-slate-100 p-1 rounded-2xl flex gap-1 text-[11px] font-black uppercase">
-                    <button
-                      onClick={() => setStratFilterMode("aggregate")}
-                      className={`px-5 py-2.5 rounded-xl transition-all ${
-                        stratFilterMode === "aggregate"
-                          ? "bg-white text-slate-900 shadow-md"
-                          : "text-slate-400"
-                      }`}
-                    >
-                      全院加總
-                    </button>
-                    <button
-                      onClick={() => setStratFilterMode("compare")}
-                      className={`px-5 py-2.5 rounded-xl transition-all ${
-                        stratFilterMode === "compare"
-                          ? "bg-white text-slate-900 shadow-md"
-                          : "text-slate-400"
-                      }`}
-                    >
-                      單一分院
-                    </button>
-                  </div>
-                  {stratFilterMode === "compare" && (
-                    <select
-                      value={stratBranch}
-                      onChange={(e) => setStratBranch(e.target.value)}
-                      className="bg-slate-100 border-none rounded-2xl px-5 py-2.5 text-xs font-black"
-                    >
-                      {BRANCHES.map((b) => (
-                        <option key={b} value={b}>
-                          {b}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  <div className="h-10 w-px bg-slate-200 mx-2"></div>
-                  <div className="bg-blue-600 p-1 rounded-2xl flex gap-1 text-[11px] font-black uppercase">
-                    <button
-                      onClick={() => setStratView("macro_A")}
-                      className={`px-5 py-2.5 rounded-xl transition-all ${
-                        stratView === "macro_A"
-                          ? "bg-white text-blue-700 shadow-md"
-                          : "text-white opacity-60"
-                      }`}
-                    >
-                      視角 A: 產值流量
-                    </button>
-                    <button
-                      onClick={() => setStratView("macro_B")}
-                      className={`px-5 py-2.5 rounded-xl transition-all ${
-                        stratView === "macro_B"
-                          ? "bg-white text-blue-700 shadow-md"
-                          : "text-white opacity-60"
-                      }`}
-                    >
-                      視角 B: 諮詢品質
-                    </button>
-                  </div>
+                <div className="bg-blue-600 p-1 rounded-2xl flex gap-1 text-[11px] font-black uppercase">
+                  <button
+                    onClick={() => setStratView("macro_A")}
+                    className={`px-5 py-2.5 rounded-xl transition-all ${
+                      stratView === "macro_A"
+                        ? "bg-white text-blue-700 shadow-md"
+                        : "text-white opacity-60"
+                    }`}
+                  >
+                    視角 A: 產值流量
+                  </button>
+                  <button
+                    onClick={() => setStratView("macro_B")}
+                    className={`px-5 py-2.5 rounded-xl transition-all ${
+                      stratView === "macro_B"
+                        ? "bg-white text-blue-700 shadow-md"
+                        : "text-white opacity-60"
+                    }`}
+                  >
+                    視角 B: 諮詢品質
+                  </button>
                 </div>
               </div>
               <div className="h-96">
@@ -1492,13 +1493,252 @@ export default function App() {
                 </table>
               </div>
             </div>
+
+            {/* 💡 3. 全新重磅加掛：十年季節性常態大腦核心區塊 (Seasonality Baselines) */}
+            <div className="border-t-4 border-dashed border-slate-200 pt-8 space-y-8">
+              <div className="bg-slate-900 text-white p-6 rounded-3xl flex justify-between items-center shadow-lg">
+                <div>
+                  <h4 className="text-base font-black tracking-wide">
+                    📊 ✨ 十年動態季節性常態基線 (Seasonality Baseline Matrix)
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-1 font-semibold">
+                    系統已自動鎖定 2017-2025 已完結年度，即時剔除未完結之 2026
+                    年度數據干擾
+                  </p>
+                </div>
+              </div>
+
+              {/* 3-A. 流量視角淡旺季 */}
+              <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 relative">
+                <div className="flex justify-between items-center mb-6">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-black text-slate-800">
+                      【流量視角】歷年每月平均諮詢量與手術量常態
+                    </h3>
+                    <button
+                      onClick={() => setShowInfoVolume(!showInfoVolume)}
+                      className="text-slate-400 hover:text-blue-600 transition-colors"
+                    >
+                      <HelpCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* 說明展開盒 */}
+                {showInfoVolume && (
+                  <div className="mb-6 p-4 bg-blue-50/80 border border-blue-100 rounded-2xl text-xs text-blue-800 font-bold leading-relaxed animate-in fade-in duration-300">
+                    <p className="flex items-center gap-1 text-blue-900 font-black mb-1">
+                      <Info className="w-3.5 h-3.5" /> 流量視角戰略意涵：
+                    </p>
+                    此圖表統計過去所有完結年份各月份的總平均。可用於觀測品牌的「市場季節性常規週期」（例如寒暑假是否具備顯著高峰）。管理層可依此常態曲線，在淡季前提早一個月調整行銷廣告投放預算，或在旺季來臨前完成耗材與產能盤點。
+                  </div>
+                )}
+
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={strategyData.seasonalityBaseline}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="#f1f5f9"
+                      />
+                      <XAxis
+                        dataKey="name"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{
+                          fontSize: 11,
+                          fontWeight: 800,
+                          fill: "#94a3b8",
+                        }}
+                      />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          fill: "#94a3b8",
+                        }}
+                      />
+                      <Tooltip />
+                      <Legend
+                        wrapperStyle={{ fontSize: "11px", fontWeight: 800 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="avgConsultation"
+                        name="十年平均諮詢量"
+                        stroke="#2563eb"
+                        strokeWidth={3}
+                        dot={{ r: 4 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="avgSurgery"
+                        name="十年平均手術量"
+                        stroke="#16a34a"
+                        strokeWidth={3}
+                        dot={{ r: 4 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* 3-B. 品質視角淡旺季 */}
+              <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 relative">
+                <div className="flex justify-between items-center mb-6">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-black text-slate-800">
+                      【品質視角】歷年每月平均轉化率與諮詢成功率常態
+                    </h3>
+                    <button
+                      onClick={() => setShowInfoQuality(!showInfoQuality)}
+                      className="text-slate-400 hover:text-purple-600 transition-colors"
+                    >
+                      <HelpCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* 說明展開盒 */}
+                {showInfoQuality && (
+                  <div className="mb-6 p-4 bg-purple-50/80 border border-purple-100 rounded-2xl text-xs text-purple-800 font-bold leading-relaxed animate-in fade-in duration-300">
+                    <p className="flex items-center gap-1 text-purple-900 font-black mb-1">
+                      <Info className="w-3.5 h-3.5" /> 品質視角戰略意涵：
+                    </p>
+                    用於檢視現場前線團隊的「收單難易度」與「名單含金量」季節週期。若某月份流量極大但轉換率通常處於低谷，代表該月份存在大量無效比價名單，團隊應適度優化前端篩選機制；反之，若某月份來客少但轉換成功率高，代表為精準剛需客群，應全力加強現場高階耗材與方案的推動。
+                  </div>
+                )}
+
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={strategyData.seasonalityBaseline}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="#f1f5f9"
+                      />
+                      <XAxis
+                        dataKey="name"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{
+                          fontSize: 11,
+                          fontWeight: 800,
+                          fill: "#94a3b8",
+                        }}
+                      />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          fill: "#94a3b8",
+                        }}
+                      />
+                      <Tooltip />
+                      <Legend
+                        wrapperStyle={{ fontSize: "11px", fontWeight: 800 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="avgConversion"
+                        name="十年平均轉換率 (%)"
+                        stroke="#7c3aed"
+                        strokeWidth={3}
+                        dot={{ r: 4 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="avgSuccess"
+                        name="十年平均諮詢成功率 (%)"
+                        stroke="#06b6d4"
+                        strokeWidth={3}
+                        dot={{ r: 4 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* 3-C. 財務視角淡旺季 */}
+              <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 relative">
+                <div className="flex justify-between items-center mb-6">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-black text-slate-800">
+                      【財務視角】歷年每月平均 ASP (手術客單價) 季節常態
+                    </h3>
+                    <button
+                      onClick={() => setShowInfoFinance(!showInfoFinance)}
+                      className="text-slate-400 hover:text-amber-600 transition-colors"
+                    >
+                      <HelpCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* 說明展開盒 */}
+                {showInfoFinance && (
+                  <div className="mb-6 p-4 bg-amber-50/80 border border-amber-100 rounded-2xl text-xs text-amber-800 font-bold leading-relaxed animate-in fade-in duration-300">
+                    <p className="flex items-center gap-1 text-amber-900 font-black mb-1">
+                      <Info className="w-3.5 h-3.5" /> 財務視角戰略意涵：
+                    </p>
+                    客單價（ASP）是驅動營收擴張的關鍵财务引擎。此常態圖用來抓出高階自費手術（如頂級客製化屈光雷射）在一年之中的銷售蜜月期。管理層可藉此評估自費手術分期付款活動、高端產品促銷的最佳切入月份，實現智慧型的產值推升。
+                  </div>
+                )}
+
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={strategyData.seasonalityBaseline}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="#f1f5f9"
+                      />
+                      <XAxis
+                        dataKey="name"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{
+                          fontSize: 11,
+                          fontWeight: 800,
+                          fill: "#94a3b8",
+                        }}
+                      />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          fill: "#94a3b8",
+                        }}
+                      />
+                      <Tooltip />
+                      <Legend
+                        wrapperStyle={{ fontSize: "11px", fontWeight: 800 }}
+                      />
+                      <Bar
+                        dataKey="avgASP"
+                        name="十年平均客單價 (NT$)"
+                        fill="#fbbf24"
+                        radius={[8, 8, 0, 0]}
+                        barSize={35}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
           </div>
         );
       case "maintenance":
         return (
           <div className="space-y-6 animate-in zoom-in-95 duration-300">
             <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
-              {/* 控制列與鎖定按鈕 */}
               <div className="flex flex-wrap gap-4 items-end mb-8 border-b border-slate-100 pb-8">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 block mb-2">
@@ -1532,10 +1772,7 @@ export default function App() {
                     ))}
                   </select>
                 </div>
-
                 <div className="flex-grow"></div>
-
-                {/* 💡 新增：解鎖/編輯防護機制 */}
                 {!isMaintEditing ? (
                   <button
                     onClick={() => setIsMaintEditing(true)}
@@ -1563,25 +1800,22 @@ export default function App() {
                         <RefreshCw className="w-4 h-4 animate-spin" />
                       ) : (
                         <Database className="w-4 h-4" />
-                      )}
+                      )}{" "}
                       批次儲存年度資料 ({maintYear})
                     </button>
                   </div>
                 )}
               </div>
-
               {uiStatus.msg && (
                 <p className="mb-4 text-center text-xs font-black text-blue-600 bg-blue-50 p-3 rounded-2xl border border-blue-100">
                   {uiStatus.msg}
                 </p>
               )}
 
-              {/* 💡 修復關鍵：使用 key 綁定強制重繪，並使用受控組件 value 來對接狀態 */}
               <div
                 key={`${maintYear}-${maintBranch}`}
                 className="overflow-x-auto rounded-3xl border border-slate-50 relative"
               >
-                {/* 唯讀狀態提示遮罩（視覺效果） */}
                 {!isMaintEditing && (
                   <div className="absolute inset-0 z-10 pointer-events-none flex justify-center items-center">
                     <div className="bg-slate-900/5 backdrop-blur-[1px] absolute inset-0"></div>
@@ -1616,7 +1850,6 @@ export default function App() {
                         strategyData.processedHistory.find(
                           (h) => h.id === id
                         ) || {};
-
                       return (
                         <tr
                           key={m}
@@ -1720,7 +1953,7 @@ export default function App() {
                                   ? "bg-slate-50"
                                   : "bg-transparent text-center opacity-70"
                               }`}
-                            />
+                            />{" "}
                             <span className="text-slate-300 font-bold ml-1">
                               %
                             </span>
@@ -1747,7 +1980,7 @@ export default function App() {
                                   ? "bg-slate-50"
                                   : "bg-transparent text-center opacity-70"
                               }`}
-                            />
+                            />{" "}
                             <span className="text-slate-300 font-bold ml-1">
                               %
                             </span>
