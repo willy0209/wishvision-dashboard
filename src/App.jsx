@@ -70,7 +70,7 @@ const METRICS = [
 const calcYoY = (cur, prev) => {
   if (!prev || prev === 0) return "--";
   const change = ((cur - prev) / prev) * 100;
-  return change.toFixed(1) + "%";
+  return (change > 0 ? "+" : "") + change.toFixed(1) + "%";
 };
 
 export default function App() {
@@ -337,6 +337,7 @@ export default function App() {
               ).toFixed(1)
             )
           : 0;
+      const asp = curSur > 0 ? Math.round(curRev / curSur) : 0;
 
       const prevYear = (parseInt(y) - 1).toString();
       const prevDocs = processedHistory.filter(
@@ -348,6 +349,27 @@ export default function App() {
       const prevSur = prevDocs.reduce((acc, cur) => acc + cur.surgery, 0);
       const prevCon = prevDocs.reduce((acc, cur) => acc + cur.consultation, 0);
 
+      // 計算品質指標的 YoY
+      const prevConv =
+        prevDocs.length > 0
+          ? parseFloat(
+              (
+                prevDocs.reduce((acc, cur) => acc + cur.conv, 0) /
+                prevDocs.length
+              ).toFixed(1)
+            )
+          : 0;
+      const prevSucc =
+        prevDocs.length > 0
+          ? parseFloat(
+              (
+                prevDocs.reduce((acc, cur) => acc + cur.succ, 0) /
+                prevDocs.length
+              ).toFixed(1)
+            )
+          : 0;
+      const prevAsp = prevSur > 0 ? Math.round(prevRev / prevSur) : 0;
+
       return {
         name: y,
         revenue: curRev,
@@ -355,10 +377,13 @@ export default function App() {
         consultation: curCon,
         conv: avgConv,
         succ: avgSucc,
-        asp: curSur > 0 ? Math.round(curRev / curSur) : 0,
+        asp: asp,
         yoyRev: calcYoY(curRev, prevRev),
         yoySur: calcYoY(curSur, prevSur),
         yoyCon: calcYoY(curCon, prevCon),
+        yoyConv: calcYoY(avgConv, prevConv),
+        yoySucc: calcYoY(avgSucc, prevSucc),
+        yoyAsp: calcYoY(asp, prevAsp),
       };
     });
 
@@ -940,7 +965,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 明細清單 */}
+              {/* 每日紀錄詳細日誌 */}
               <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
                 <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">
@@ -1004,7 +1029,7 @@ export default function App() {
                     年度戰略走勢全覽 (Macro Annual Trend)
                   </h3>
                   <p className="text-xs text-slate-400 font-bold mt-1">
-                    追蹤跨年度產能擴張與醫療品質穩定度
+                    追蹤跨年度產能擴張與諮詢收單品質
                   </p>
                 </div>
                 <div className="flex gap-4 items-center">
@@ -1063,7 +1088,7 @@ export default function App() {
                           : "text-white opacity-60"
                       }`}
                     >
-                      視角 B: 醫療品質
+                      視角 B: 諮詢品質
                     </button>
                   </div>
                 </div>
@@ -1147,18 +1172,10 @@ export default function App() {
                           yAxisId="left"
                           type="monotone"
                           dataKey="succ"
-                          name="醫療成功率 (%)"
+                          name="諮詢成功率 (%)"
                           stroke="#06b6d4"
                           strokeWidth={4}
                           dot={{ r: 5, fill: "#06b6d4" }}
-                        />
-                        <Bar
-                          yAxisId="right"
-                          dataKey="asp"
-                          name="平均 ASP (客單價)"
-                          fill="#e2e8f0"
-                          radius={[12, 12, 0, 0]}
-                          barSize={30}
                         />
                       </>
                     )}
@@ -1166,19 +1183,31 @@ export default function App() {
                 </ResponsiveContainer>
               </div>
 
-              {/* 💡 修復關鍵 Bug 2：加上 [...] 淺拷貝再 sort，徹底防堵記憶體污染造成的頁籤全白 */}
+              {/* 表格 B: 年度明細與成長率 (動態切換) */}
               <div className="mt-12 overflow-hidden rounded-3xl border border-slate-100">
                 <table className="w-full text-left text-[11px]">
                   <thead className="bg-slate-50 text-slate-400 font-black uppercase">
                     <tr>
                       <th className="p-4">年度指標</th>
-                      <th className="p-4">總諮詢量</th>
-                      <th className="p-4">YoY</th>
-                      <th className="p-4">總手術量</th>
-                      <th className="p-4">YoY</th>
-                      <th className="p-4">總營業額</th>
-                      <th className="p-4">YoY</th>
-                      <th className="p-4">平均 ASP</th>
+                      {stratView === "macro_A" ? (
+                        <>
+                          <th className="p-4">總諮詢量</th>
+                          <th className="p-4">YoY</th>
+                          <th className="p-4">總手術量</th>
+                          <th className="p-4">YoY</th>
+                          <th className="p-4">總營業額</th>
+                          <th className="p-4">YoY</th>
+                          <th className="p-4">平均 ASP</th>
+                          <th className="p-4">YoY</th>
+                        </>
+                      ) : (
+                        <>
+                          <th className="p-4">平均轉換率</th>
+                          <th className="p-4">YoY</th>
+                          <th className="p-4">諮詢成功率</th>
+                          <th className="p-4">YoY</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1192,45 +1221,81 @@ export default function App() {
                           <td className="p-4 text-slate-900 font-black text-sm">
                             {y.name}
                           </td>
-                          <td className="p-4 text-blue-600">
-                            {y.consultation.toLocaleString()}
-                          </td>
-                          <td
-                            className={`p-4 ${
-                              y.yoyCon.includes("-")
-                                ? "text-red-500"
-                                : "text-green-600"
-                            }`}
-                          >
-                            {y.yoyCon}
-                          </td>
-                          <td className="p-4 text-emerald-600">
-                            {y.surgery.toLocaleString()}
-                          </td>
-                          <td
-                            className={`p-4 ${
-                              y.yoySur.includes("-")
-                                ? "text-red-500"
-                                : "text-green-600"
-                            }`}
-                          >
-                            {y.yoySur}
-                          </td>
-                          <td className="p-4 text-amber-600">
-                            ${(y.revenue / 10000).toFixed(0)}萬
-                          </td>
-                          <td
-                            className={`p-4 ${
-                              y.yoyRev.includes("-")
-                                ? "text-red-500"
-                                : "text-green-600"
-                            }`}
-                          >
-                            {y.yoyRev}
-                          </td>
-                          <td className="p-4 text-slate-400">
-                            ${y.asp.toLocaleString()}
-                          </td>
+                          {stratView === "macro_A" ? (
+                            <>
+                              <td className="p-4 text-blue-600">
+                                {y.consultation.toLocaleString()}
+                              </td>
+                              <td
+                                className={`p-4 ${
+                                  y.yoyCon.includes("-")
+                                    ? "text-red-500"
+                                    : "text-green-600"
+                                }`}
+                              >
+                                {y.yoyCon}
+                              </td>
+                              <td className="p-4 text-emerald-600">
+                                {y.surgery.toLocaleString()}
+                              </td>
+                              <td
+                                className={`p-4 ${
+                                  y.yoySur.includes("-")
+                                    ? "text-red-500"
+                                    : "text-green-600"
+                                }`}
+                              >
+                                {y.yoySur}
+                              </td>
+                              <td className="p-4 text-amber-600">
+                                ${(y.revenue / 10000).toFixed(0)}萬
+                              </td>
+                              <td
+                                className={`p-4 ${
+                                  y.yoyRev.includes("-")
+                                    ? "text-red-500"
+                                    : "text-green-600"
+                                }`}
+                              >
+                                {y.yoyRev}
+                              </td>
+                              <td className="p-4 text-slate-600">
+                                ${y.asp.toLocaleString()}
+                              </td>
+                              <td
+                                className={`p-4 ${
+                                  y.yoyAsp.includes("-")
+                                    ? "text-red-500"
+                                    : "text-green-600"
+                                }`}
+                              >
+                                {y.yoyAsp}
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="p-4 text-purple-600">{y.conv}%</td>
+                              <td
+                                className={`p-4 ${
+                                  y.yoyConv.includes("-")
+                                    ? "text-red-500"
+                                    : "text-green-600"
+                                }`}
+                              >
+                                {y.yoyConv}
+                              </td>
+                              <td className="p-4 text-cyan-600">{y.succ}%</td>
+                              <td
+                                className={`p-4 ${
+                                  y.yoySucc.includes("-")
+                                    ? "text-red-500"
+                                    : "text-green-600"
+                                }`}
+                              >
+                                {y.yoySucc}
+                              </td>
+                            </>
+                          )}
                         </tr>
                       ))}
                   </tbody>
@@ -1346,7 +1411,7 @@ export default function App() {
                       <th className="p-4">YoY 成長率</th>
                       <th className="p-4">轉換率</th>
                       <th className="p-4">YoY</th>
-                      <th className="p-4">成功率</th>
+                      <th className="p-4">諮詢成功率</th>
                       <th className="p-4">YoY</th>
                     </tr>
                   </thead>
@@ -1413,63 +1478,6 @@ export default function App() {
                         </td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* 3. 歷史戰略明細數據庫 */}
-            <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
-              <div className="p-4 bg-slate-100 border-b border-slate-200 flex justify-between items-center">
-                <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest">
-                  歷史戰略明細數據紀錄
-                </h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-[11px] text-left">
-                  <thead className="bg-slate-50 text-slate-400 font-bold">
-                    <tr>
-                      <th className="p-3">年份-月</th>
-                      <th className="p-3">分院</th>
-                      <th className="p-3">諮詢</th>
-                      <th className="p-3">手術</th>
-                      <th className="p-3">總營收</th>
-                      <th className="p-3">ASP</th>
-                      <th className="p-3">轉換</th>
-                      <th className="p-3">成功</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {[...strategyData.processedHistory]
-                      .sort((a, b) => b.id.localeCompare(a.id))
-                      .slice(0, 24)
-                      .map((h, i) => (
-                        <tr
-                          key={i}
-                          className="hover:bg-slate-50 transition-colors font-semibold"
-                        >
-                          <td className="p-3 font-bold text-slate-400">
-                            {h.year}-{h.month}
-                          </td>
-                          <td className="p-3 font-black text-slate-800">
-                            {h.branch}
-                          </td>
-                          <td className="p-3">{h.consultation}</td>
-                          <td className="p-3">{h.surgery}</td>
-                          <td className="p-3 font-bold text-slate-900">
-                            ${(h.revenue / 10000).toFixed(1)}萬
-                          </td>
-                          <td className="p-3 text-amber-600 font-black">
-                            ${h.asp.toLocaleString()}
-                          </td>
-                          <td className="p-3 text-purple-600 font-black">
-                            {h.conv}%
-                          </td>
-                          <td className="p-3 text-blue-600 font-black">
-                            {h.succ}%
-                          </td>
-                        </tr>
-                      ))}
                   </tbody>
                 </table>
               </div>
@@ -1543,7 +1551,7 @@ export default function App() {
                         CRM 轉換率%
                       </th>
                       <th className="p-5 text-left text-cyan-600">
-                        醫療成功率%
+                        諮詢成功率%
                       </th>
                       <th className="p-5 text-center">單月</th>
                     </tr>
