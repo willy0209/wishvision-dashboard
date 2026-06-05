@@ -60,6 +60,7 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 const BRANCHES = ["台北館前院", "台北仁愛院", "台中東興院", "新竹光明院"];
+const MAINT_BRANCHES = [...BRANCHES, "全院總計"]; // 💡 路線A：新增全院總計專屬通道
 const YEARS = Array.from({ length: 10 }, (_, i) => (2017 + i).toString());
 const MONTHS = Array.from({ length: 12 }, (_, i) =>
   (i + 1).toString().padStart(2, "0")
@@ -328,9 +329,8 @@ export default function App() {
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
-  // --- 5. 戰略看板數據矩陣 (整合 Null 精準平均防護與月度加總修復) ---
+  // --- 5. 戰略看板數據矩陣 (💡 路線A：無縫頂替演算法) ---
   const strategyData = useMemo(() => {
-    // 💡 取出資料時，嚴格保留 null，不自動補 0
     const processedHistory = historyData.map((d) => ({
       ...d,
       revenue:
@@ -361,46 +361,74 @@ export default function App() {
           : Number(d.successRate),
     }));
 
+    const isAgg = stratFilterMode === "aggregate";
+    const branchDocs = processedHistory.filter((d) =>
+      isAgg ? BRANCHES.includes(d.branch) : d.branch === stratBranch
+    );
+    const groupDocs = processedHistory.filter((d) => d.branch === "全院總計");
+
     // 1. 年度趨勢
     const yearlyTrend = YEARS.map((y) => {
-      const yearDocs = processedHistory.filter(
-        (d) =>
-          d.year === y &&
-          (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
-      );
+      const yBranchDocs = branchDocs.filter((d) => d.year === y);
+      const yGroupDocs = groupDocs.filter((d) => d.year === y);
 
-      const curRev = yearDocs.reduce((acc, cur) => acc + (cur.revenue || 0), 0);
-      const curSur = yearDocs.reduce((acc, cur) => acc + (cur.surgery || 0), 0);
-      const curCon = yearDocs.reduce(
-        (acc, cur) => acc + (cur.consultation || 0),
-        0
-      );
-
-      const avgConv = getAvg(yearDocs, "conv");
-      const avgSucc = getAvg(yearDocs, "succ");
-      const asp = curSur > 0 ? Math.round(curRev / curSur) : 0;
-
-      const prevYear = (parseInt(y) - 1).toString();
-      const prevDocs = processedHistory.filter(
-        (d) =>
-          d.year === prevYear &&
-          (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
-      );
-      const prevRev = prevDocs.reduce(
+      const curRev = yBranchDocs.reduce(
         (acc, cur) => acc + (cur.revenue || 0),
         0
       );
-      const prevSur = prevDocs.reduce(
+      const curSur = yBranchDocs.reduce(
         (acc, cur) => acc + (cur.surgery || 0),
         0
       );
-      const prevDocsCon = prevDocs.reduce(
+      const curCon = yBranchDocs.reduce(
         (acc, cur) => acc + (cur.consultation || 0),
         0
       );
-      const prevConv = getAvg(prevDocs, "conv");
-      const prevSucc = getAvg(prevDocs, "succ");
+      const asp = curSur > 0 ? Math.round(curRev / curSur) : 0;
+
+      // 💡 如果是全院加總，且您有填寫全院總計，優先採用全院總計的精準數字
+      let avgConv = getAvg(yBranchDocs, "conv");
+      let avgSucc = getAvg(yBranchDocs, "succ");
+      if (
+        isAgg &&
+        yGroupDocs.some((d) => d.conv !== null && d.conv !== undefined)
+      )
+        avgConv = getAvg(yGroupDocs, "conv");
+      if (
+        isAgg &&
+        yGroupDocs.some((d) => d.succ !== null && d.succ !== undefined)
+      )
+        avgSucc = getAvg(yGroupDocs, "succ");
+
+      const prevYear = (parseInt(y) - 1).toString();
+      const pBranchDocs = branchDocs.filter((d) => d.year === prevYear);
+      const pGroupDocs = groupDocs.filter((d) => d.year === prevYear);
+      const prevRev = pBranchDocs.reduce(
+        (acc, cur) => acc + (cur.revenue || 0),
+        0
+      );
+      const prevSur = pBranchDocs.reduce(
+        (acc, cur) => acc + (cur.surgery || 0),
+        0
+      );
+      const prevCon = pBranchDocs.reduce(
+        (acc, cur) => acc + (cur.consultation || 0),
+        0
+      );
       const prevAsp = prevSur > 0 ? Math.round(prevRev / prevSur) : 0;
+
+      let prevConv = getAvg(pBranchDocs, "conv");
+      let prevSucc = getAvg(pBranchDocs, "succ");
+      if (
+        isAgg &&
+        pGroupDocs.some((d) => d.conv !== null && d.conv !== undefined)
+      )
+        prevConv = getAvg(pGroupDocs, "conv");
+      if (
+        isAgg &&
+        pGroupDocs.some((d) => d.succ !== null && d.succ !== undefined)
+      )
+        prevSucc = getAvg(pGroupDocs, "succ");
 
       return {
         name: y,
@@ -412,52 +440,54 @@ export default function App() {
         asp: asp,
         yoyRev: calcYoY(curRev, prevRev),
         yoySur: calcYoY(curSur, prevSur),
-        yoyCon: calcYoY(curCon, prevDocsCon),
+        yoyCon: calcYoY(curCon, prevCon),
         yoyConv: calcYoY(avgConv, prevConv),
         yoySucc: calcYoY(avgSucc, prevSucc),
         yoyAsp: calcYoY(asp, prevAsp),
       };
     });
 
-    // 2. 月度 YoY 對比 (💡 已修復：全打包動態加總，取代原本只找第一筆的寫法)
+    // 2. 月度 YoY 對比
     const prevYear = (parseInt(stratBaseYear) - 1).toString();
     const monthlyYoY = MONTHS.map((m) => {
-      // 找出該月該條件下的「所有」分院資料
-      const curDocs = processedHistory.filter(
-        (d) =>
-          d.year === stratBaseYear &&
-          d.month === m &&
-          (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
+      const curBranchDocs = branchDocs.filter(
+        (d) => d.year === stratBaseYear && d.month === m
       );
-      const prevDocs = processedHistory.filter(
-        (d) =>
-          d.year === prevYear &&
-          d.month === m &&
-          (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
+      const curGroupDocs = groupDocs.filter(
+        (d) => d.year === stratBaseYear && d.month === m
+      );
+      const prevBranchDocs = branchDocs.filter(
+        (d) => d.year === prevYear && d.month === m
+      );
+      const prevGroupDocs = groupDocs.filter(
+        (d) => d.year === prevYear && d.month === m
       );
 
-      // 動態加總處理器
-      const aggregateDocs = (docs) => {
-        if (docs.length === 0) return null;
+      const aggregateDocs = (bDocs, gDocs) => {
+        if (bDocs.length === 0 && gDocs.length === 0) return null;
         const getSum = (k) => {
-          const valid = docs.filter((d) => d[k] !== null && d[k] !== undefined);
+          const valid = bDocs.filter(
+            (d) => d[k] !== null && d[k] !== undefined
+          );
           if (valid.length === 0) return null;
           return valid.reduce((sum, d) => sum + Number(d[k]), 0);
         };
-        const hasValid = (k) =>
-          docs.some((d) => d[k] !== null && d[k] !== undefined);
+        const hasGroupConv =
+          isAgg && gDocs.some((d) => d.conv !== null && d.conv !== undefined);
+        const hasGroupSucc =
+          isAgg && gDocs.some((d) => d.succ !== null && d.succ !== undefined);
 
         return {
           revenue: getSum("revenue"),
           consultation: getSum("consultation"),
           surgery: getSum("surgery"),
-          conv: hasValid("conv") ? getAvg(docs, "conv") : null,
-          succ: hasValid("succ") ? getAvg(docs, "succ") : null,
+          conv: hasGroupConv ? getAvg(gDocs, "conv") : getAvg(bDocs, "conv"),
+          succ: hasGroupSucc ? getAvg(gDocs, "succ") : getAvg(bDocs, "succ"),
         };
       };
 
-      const curData = aggregateDocs(curDocs);
-      const prevData = aggregateDocs(prevDocs);
+      const curData = aggregateDocs(curBranchDocs, curGroupDocs);
+      const prevData = aggregateDocs(prevBranchDocs, prevGroupDocs);
 
       const getVal = (obj, key) => {
         if (!obj) return null;
@@ -485,18 +515,36 @@ export default function App() {
     // 3. 歷年季節常態模型大腦
     const currentYearStr = new Date().getFullYear().toString();
     const completedYearDocs = processedHistory.filter(
-      (d) =>
-        d.year < currentYearStr &&
-        (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
+      (d) => d.year < currentYearStr
     );
 
     const seasonalityBaseline = MONTHS.map((m) => {
-      const targetMonthDocs = completedYearDocs.filter((d) => d.month === m);
+      const targetMonthDocs = completedYearDocs.filter(
+        (d) =>
+          d.month === m &&
+          (isAgg ? BRANCHES.includes(d.branch) : d.branch === stratBranch)
+      );
+      const targetGroupDocs = completedYearDocs.filter(
+        (d) => d.month === m && d.branch === "全院總計"
+      );
 
       const avgConsultation = getAvg(targetMonthDocs, "consultation");
       const avgSurgery = getAvg(targetMonthDocs, "surgery");
-      const avgConversion = getAvg(targetMonthDocs, "conv");
-      const avgSuccess = getAvg(targetMonthDocs, "succ");
+
+      let avgConversion = getAvg(targetMonthDocs, "conv");
+      let avgSuccess = getAvg(targetMonthDocs, "succ");
+
+      // 💡 優先抓取全院總計的常態均值
+      if (
+        isAgg &&
+        targetGroupDocs.some((d) => d.conv !== null && d.conv !== undefined)
+      )
+        avgConversion = getAvg(targetGroupDocs, "conv");
+      if (
+        isAgg &&
+        targetGroupDocs.some((d) => d.succ !== null && d.succ !== undefined)
+      )
+        avgSuccess = getAvg(targetGroupDocs, "succ");
 
       const validSurRevDocs = targetMonthDocs.filter(
         (d) => d.surgery !== null && d.revenue !== null
@@ -1178,7 +1226,7 @@ export default function App() {
                 )}
               </div>
               <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg border border-blue-100">
-                雷達已啟動：歷年縱深數據加權模組 (抗 Null 值干擾)
+                雷達已啟動：歷年縱深數據加權模組 (絕對控制優先)
               </span>
             </div>
 
@@ -1940,7 +1988,8 @@ export default function App() {
                     onChange={(e) => setMaintBranch(e.target.value)}
                     className="bg-slate-100 border-none rounded-2xl px-5 py-3 text-sm font-black"
                   >
-                    {BRANCHES.map((b) => (
+                    {/* 💡 路線A：套用包含全院總計的專屬選項 */}
+                    {MAINT_BRANCHES.map((b) => (
                       <option key={b} value={b}>
                         {b}
                       </option>
@@ -1988,6 +2037,17 @@ export default function App() {
                 <p className="mb-4 text-center text-xs font-black text-blue-600 bg-blue-50 p-3 rounded-2xl border border-blue-100">
                   {uiStatus.msg}
                 </p>
+              )}
+
+              {/* 💡 路線A：全院總計專屬 UI 提示 */}
+              {maintBranch === "全院總計" && (
+                <div className="w-full bg-blue-50 p-4 rounded-2xl border border-blue-100 mb-4 animate-in fade-in flex items-start gap-2">
+                  <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                  <p className="text-xs font-bold text-blue-800 leading-relaxed">
+                    全院總計模式：您只需維護「CRM
+                    轉換率」與「諮詢成功率」。流量與財務指標留白即可，系統在戰略看板中會為您自動加總各實體分院，避免重複計算。
+                  </p>
+                </div>
               )}
 
               <div
@@ -2052,10 +2112,7 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    consultation:
-                                      e.target.value === ""
-                                        ? null
-                                        : e.target.value,
+                                    consultation: e.target.value,
                                   },
                                 }))
                               }
@@ -2080,10 +2137,7 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    surgery:
-                                      e.target.value === ""
-                                        ? null
-                                        : e.target.value,
+                                    surgery: e.target.value,
                                   },
                                 }))
                               }
@@ -2108,10 +2162,7 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    revenue:
-                                      e.target.value === ""
-                                        ? null
-                                        : e.target.value,
+                                    revenue: e.target.value,
                                   },
                                 }))
                               }
@@ -2137,10 +2188,7 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    conversion:
-                                      e.target.value === ""
-                                        ? null
-                                        : e.target.value,
+                                    conversion: e.target.value,
                                   },
                                 }))
                               }
@@ -2169,10 +2217,7 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    successRate:
-                                      e.target.value === ""
-                                        ? null
-                                        : e.target.value,
+                                    successRate: e.target.value,
                                   },
                                 }))
                               }
