@@ -328,7 +328,7 @@ export default function App() {
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
-  // --- 5. 戰略看板數據矩陣 (整合 Null 精準平均防護) ---
+  // --- 5. 戰略看板數據矩陣 (整合 Null 精準平均防護與月度加總修復) ---
   const strategyData = useMemo(() => {
     // 💡 取出資料時，嚴格保留 null，不自動補 0
     const processedHistory = historyData.map((d) => ({
@@ -376,7 +376,6 @@ export default function App() {
         0
       );
 
-      // 💡 採用精準的 getAvg 計算，完美貼合 CRM
       const avgConv = getAvg(yearDocs, "conv");
       const avgSucc = getAvg(yearDocs, "succ");
       const asp = curSur > 0 ? Math.round(curRev / curSur) : 0;
@@ -420,52 +419,70 @@ export default function App() {
       };
     });
 
-    // 2. 月度 YoY 對比
+    // 2. 月度 YoY 對比 (💡 已修復：全打包動態加總，取代原本只找第一筆的寫法)
     const prevYear = (parseInt(stratBaseYear) - 1).toString();
     const monthlyYoY = MONTHS.map((m) => {
-      const cur =
-        processedHistory.find(
-          (d) =>
-            d.year === stratBaseYear &&
-            d.month === m &&
-            (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
-        ) || null;
-      const prev =
-        processedHistory.find(
-          (d) =>
-            d.year === prevYear &&
-            d.month === m &&
-            (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
-        ) || null;
+      // 找出該月該條件下的「所有」分院資料
+      const curDocs = processedHistory.filter(
+        (d) =>
+          d.year === stratBaseYear &&
+          d.month === m &&
+          (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
+      );
+      const prevDocs = processedHistory.filter(
+        (d) =>
+          d.year === prevYear &&
+          d.month === m &&
+          (stratFilterMode === "aggregate" ? true : d.branch === stratBranch)
+      );
+
+      // 動態加總處理器
+      const aggregateDocs = (docs) => {
+        if (docs.length === 0) return null;
+        const getSum = (k) => {
+          const valid = docs.filter((d) => d[k] !== null && d[k] !== undefined);
+          if (valid.length === 0) return null;
+          return valid.reduce((sum, d) => sum + Number(d[k]), 0);
+        };
+        const hasValid = (k) =>
+          docs.some((d) => d[k] !== null && d[k] !== undefined);
+
+        return {
+          revenue: getSum("revenue"),
+          consultation: getSum("consultation"),
+          surgery: getSum("surgery"),
+          conv: hasValid("conv") ? getAvg(docs, "conv") : null,
+          succ: hasValid("succ") ? getAvg(docs, "succ") : null,
+        };
+      };
+
+      const curData = aggregateDocs(curDocs);
+      const prevData = aggregateDocs(prevDocs);
 
       const getVal = (obj, key) => {
         if (!obj) return null;
-        if (key === "revenue")
-          return obj.revenue !== undefined ? obj.revenue : null;
-        if (key === "consultation")
-          return obj.consultation !== undefined ? obj.consultation : null;
-        if (key === "surgery")
-          return obj.surgery !== undefined ? obj.surgery : null;
-        if (key === "conversion")
-          return obj.conv !== undefined ? obj.conv : null;
-        if (key === "success") return obj.succ !== undefined ? obj.succ : null;
+        if (key === "revenue") return obj.revenue;
+        if (key === "consultation") return obj.consultation;
+        if (key === "surgery") return obj.surgery;
+        if (key === "conversion") return obj.conv;
+        if (key === "success") return obj.succ;
         return null;
       };
 
-      const cV = getVal(cur, stratMetric);
-      const pV = getVal(prev, stratMetric);
+      const cV = getVal(curData, stratMetric);
+      const pV = getVal(prevData, stratMetric);
 
       return {
         name: `${m}月`,
         baseVal: cV,
         prevVal: pV,
         yoy: calcYoY(cV, pV),
-        curData: cur || {},
-        prevData: prev || {},
+        curData: curData || {},
+        prevData: prevData || {},
       };
     });
 
-    // 3. 歷年季節常態模型大腦 (精準排除無效 Null 月份)
+    // 3. 歷年季節常態模型大腦
     const currentYearStr = new Date().getFullYear().toString();
     const completedYearDocs = processedHistory.filter(
       (d) =>
@@ -544,12 +561,10 @@ export default function App() {
 
   const handleMaintSave = async (m) => {
     const id = `${maintYear}-${m}_${maintBranch}`;
-    // 💡 取出正在編輯的這格資料，如果沒編輯就用空物件
     const editedData = maintGrid[m] || {};
     const existingData =
       strategyData.processedHistory.find((h) => h.id === id) || {};
 
-    // 💡 存檔時，強制將空白字串或未定義轉換為真正的 null
     const parseInput = (val) =>
       val === "" || val === null || val === undefined ? null : Number(val);
 
@@ -559,7 +574,6 @@ export default function App() {
         year: maintYear,
         month: m,
         branch: maintBranch,
-        // 嚴格判斷：如果使用者有動過這格( !== undefined)，就以使用者的為主(包含清空)，否則沿用舊資料
         consultation: parseInput(
           editedData.consultation !== undefined
             ? editedData.consultation
@@ -1336,7 +1350,8 @@ export default function App() {
                               <td className="p-4 text-blue-600">
                                 {y.consultation === 0 &&
                                 !strategyData.processedHistory.some(
-                                  (d) => d.year === y.name && d.consultation > 0
+                                  (d) =>
+                                    d.year === y.name && d.consultation !== null
                                 )
                                   ? "--"
                                   : y.consultation.toLocaleString()}
@@ -1355,7 +1370,7 @@ export default function App() {
                               <td className="p-4 text-emerald-600">
                                 {y.surgery === 0 &&
                                 !strategyData.processedHistory.some(
-                                  (d) => d.year === y.name && d.surgery > 0
+                                  (d) => d.year === y.name && d.surgery !== null
                                 )
                                   ? "--"
                                   : y.surgery.toLocaleString()}
@@ -1374,7 +1389,7 @@ export default function App() {
                               <td className="p-4 text-amber-600">
                                 {y.revenue === 0 &&
                                 !strategyData.processedHistory.some(
-                                  (d) => d.year === y.name && d.revenue > 0
+                                  (d) => d.year === y.name && d.revenue !== null
                                 )
                                   ? "--"
                                   : `$${(y.revenue / 10000).toFixed(0)}萬`}
@@ -2037,7 +2052,10 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    consultation: e.target.value,
+                                    consultation:
+                                      e.target.value === ""
+                                        ? null
+                                        : e.target.value,
                                   },
                                 }))
                               }
@@ -2062,7 +2080,10 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    surgery: e.target.value,
+                                    surgery:
+                                      e.target.value === ""
+                                        ? null
+                                        : e.target.value,
                                   },
                                 }))
                               }
@@ -2087,7 +2108,10 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    revenue: e.target.value,
+                                    revenue:
+                                      e.target.value === ""
+                                        ? null
+                                        : e.target.value,
                                   },
                                 }))
                               }
@@ -2113,7 +2137,10 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    conversion: e.target.value,
+                                    conversion:
+                                      e.target.value === ""
+                                        ? null
+                                        : e.target.value,
                                   },
                                 }))
                               }
@@ -2142,7 +2169,10 @@ export default function App() {
                                   ...prev,
                                   [m]: {
                                     ...(prev[m] || existing),
-                                    successRate: e.target.value,
+                                    successRate:
+                                      e.target.value === ""
+                                        ? null
+                                        : e.target.value,
                                   },
                                 }))
                               }
