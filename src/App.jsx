@@ -60,7 +60,7 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 const BRANCHES = ["台北館前院", "台北仁愛院", "台中東興院", "新竹光明院"];
-const MAINT_BRANCHES = [...BRANCHES, "全院總計"]; // 💡 路線A：新增全院總計專屬通道
+const MAINT_BRANCHES = [...BRANCHES, "全院總計"];
 const YEARS = Array.from({ length: 10 }, (_, i) => (2017 + i).toString());
 const MONTHS = Array.from({ length: 12 }, (_, i) =>
   (i + 1).toString().padStart(2, "0")
@@ -134,6 +134,7 @@ export default function App() {
   const [showInfoVolume, setShowInfoVolume] = useState(false);
   const [showInfoQuality, setShowInfoQuality] = useState(false);
   const [showInfoFinance, setShowInfoFinance] = useState(false);
+  const [showInfoRev, setShowInfoRev] = useState(false); // 新增營收視角開關
 
   // 維護矩陣狀態
   const [maintYear, setMaintYear] = useState(
@@ -329,7 +330,7 @@ export default function App() {
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
-  // --- 5. 戰略看板數據矩陣 (💡 路線A：無縫頂替演算法) ---
+  // --- 5. 戰略看板數據矩陣 ---
   const strategyData = useMemo(() => {
     const processedHistory = historyData.map((d) => ({
       ...d,
@@ -386,7 +387,6 @@ export default function App() {
       );
       const asp = curSur > 0 ? Math.round(curRev / curSur) : 0;
 
-      // 💡 如果是全院加總，且您有填寫全院總計，優先採用全院總計的精準數字
       let avgConv = getAvg(yBranchDocs, "conv");
       let avgSucc = getAvg(yBranchDocs, "succ");
       if (
@@ -477,12 +477,17 @@ export default function App() {
         const hasGroupSucc =
           isAgg && gDocs.some((d) => d.succ !== null && d.succ !== undefined);
 
+        const revSum = getSum("revenue");
+        const surSum = getSum("surgery");
+        const aspCalc = surSum > 0 ? Math.round(revSum / surSum) : null;
+
         return {
-          revenue: getSum("revenue"),
+          revenue: revSum,
           consultation: getSum("consultation"),
-          surgery: getSum("surgery"),
+          surgery: surSum,
           conv: hasGroupConv ? getAvg(gDocs, "conv") : getAvg(bDocs, "conv"),
           succ: hasGroupSucc ? getAvg(gDocs, "succ") : getAvg(bDocs, "succ"),
+          asp: aspCalc,
         };
       };
 
@@ -496,6 +501,7 @@ export default function App() {
         if (key === "surgery") return obj.surgery;
         if (key === "conversion") return obj.conv;
         if (key === "success") return obj.succ;
+        if (key === "asp") return obj.asp; // 新增 ASP 數值抓取
         return null;
       };
 
@@ -530,11 +536,12 @@ export default function App() {
 
       const avgConsultation = getAvg(targetMonthDocs, "consultation");
       const avgSurgery = getAvg(targetMonthDocs, "surgery");
+      const avgRevenue = getAvg(targetMonthDocs, "revenue"); // 新增：歷年平均營收
 
       let avgConversion = getAvg(targetMonthDocs, "conv");
       let avgSuccess = getAvg(targetMonthDocs, "succ");
 
-      // 💡 優先抓取全院總計的常態均值
+      // 優先抓取全院總計的常態均值
       if (
         isAgg &&
         targetGroupDocs.some((d) => d.conv !== null && d.conv !== undefined)
@@ -566,6 +573,7 @@ export default function App() {
         avgConversion: avgConversion,
         avgSuccess: avgSuccess,
         avgASP: avgASP,
+        avgRevenue: Math.round(avgRevenue), // 新增：歷年平均營收
       };
     });
 
@@ -1545,12 +1553,14 @@ export default function App() {
                     ))}
                   </select>
                   <div className="bg-slate-100 p-1.5 rounded-2xl flex gap-1 text-[10px] font-black uppercase">
+                    {/* 💡 新增 ASP 選項 */}
                     {[
                       { id: "revenue", label: "營收", icon: DollarSign },
                       { id: "consultation", label: "諮詢", icon: Activity },
                       { id: "surgery", label: "手術", icon: Target },
                       { id: "conversion", label: "轉換%", icon: Percent },
                       { id: "success", label: "成功%", icon: Star },
+                      { id: "asp", label: "ASP", icon: DollarSign },
                     ].map((m) => (
                       <button
                         key={m.id}
@@ -1643,10 +1653,13 @@ export default function App() {
                           {m.name}
                         </td>
                         <td className="p-4 text-slate-900 font-black text-sm">
+                          {/* 💡 新增 ASP 的格式化顯示 */}
                           {m.baseVal === null
                             ? "--"
                             : stratMetric === "revenue"
                             ? `$${(m.baseVal / 10000).toFixed(0)}萬`
+                            : stratMetric === "asp"
+                            ? `$${m.baseVal.toLocaleString()}`
                             : m.baseVal}
                         </td>
                         <td className="p-4 text-slate-400">
@@ -1654,6 +1667,8 @@ export default function App() {
                             ? "--"
                             : stratMetric === "revenue"
                             ? `$${(m.prevVal / 10000).toFixed(0)}萬`
+                            : stratMetric === "asp"
+                            ? `$${m.prevVal.toLocaleString()}`
                             : m.prevVal}
                         </td>
                         <td
@@ -1720,7 +1735,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* 💡 3. 歷年季節性常態大腦核心區塊 */}
+            {/* 3. 歷年季節性常態大腦核心區塊 */}
             <div className="border-t-4 border-dashed border-slate-200 pt-8 space-y-8">
               <div className="bg-slate-900 text-white p-6 rounded-3xl flex justify-between items-center shadow-lg">
                 <div>
@@ -1954,6 +1969,82 @@ export default function App() {
                   </ResponsiveContainer>
                 </div>
               </div>
+
+              {/* 💡 3-D. 新增營收視角淡旺季 */}
+              <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 relative">
+                <div className="flex justify-between items-center mb-6">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-black text-slate-800">
+                      【營收視角】歷年每月平均總營收常態
+                    </h3>
+                    <button
+                      onClick={() => setShowInfoRev(!showInfoRev)}
+                      className="text-slate-400 hover:text-green-600 transition-colors"
+                    >
+                      <HelpCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {showInfoRev && (
+                  <div className="mb-6 p-4 bg-green-50/80 border border-green-100 rounded-2xl text-xs text-green-800 font-bold leading-relaxed animate-in fade-in duration-300">
+                    <p className="flex items-center gap-1 text-green-900 font-black mb-1">
+                      <Info className="w-3.5 h-3.5" /> 營收視角戰略意涵：
+                    </p>
+                    此圖表統計過去所有完結年份各月份的平均總營收。可用於觀測集團或分院在全年度的「現金流與產值水位」真實波動，協助財務端進行資金調度規劃與次年度之營收預算編列參考。
+                  </div>
+                )}
+
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={strategyData.seasonalityBaseline}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="#f1f5f9"
+                      />
+                      <XAxis
+                        dataKey="name"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{
+                          fontSize: 11,
+                          fontWeight: 800,
+                          fill: "#94a3b8",
+                        }}
+                      />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          fill: "#94a3b8",
+                        }}
+                        tickFormatter={(val) =>
+                          `$${(val / 10000).toFixed(0)}萬`
+                        }
+                      />
+                      <Tooltip
+                        formatter={(value) =>
+                          `$${Number(value).toLocaleString()}`
+                        }
+                      />
+                      <Legend
+                        wrapperStyle={{ fontSize: "11px", fontWeight: 800 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="avgRevenue"
+                        name="歷年平均總營收 (NT$)"
+                        stroke="#10b981"
+                        strokeWidth={3}
+                        dot={{ r: 4 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
             </div>
           </div>
         );
@@ -1988,7 +2079,6 @@ export default function App() {
                     onChange={(e) => setMaintBranch(e.target.value)}
                     className="bg-slate-100 border-none rounded-2xl px-5 py-3 text-sm font-black"
                   >
-                    {/* 💡 路線A：套用包含全院總計的專屬選項 */}
                     {MAINT_BRANCHES.map((b) => (
                       <option key={b} value={b}>
                         {b}
@@ -2039,7 +2129,7 @@ export default function App() {
                 </p>
               )}
 
-              {/* 💡 路線A：全院總計專屬 UI 提示 */}
+              {/* 全院總計專屬 UI 提示 */}
               {maintBranch === "全院總計" && (
                 <div className="w-full bg-blue-50 p-4 rounded-2xl border border-blue-100 mb-4 animate-in fade-in flex items-start gap-2">
                   <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
