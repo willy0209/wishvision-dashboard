@@ -86,7 +86,7 @@ const calcYoY = (cur, prev) => {
   return (change > 0 ? "+" : "") + change.toFixed(1) + "%";
 };
 
-// 💡 核心輔助函數：計算精準平均（忽略 Null，包含 0）
+// 核心輔助函數：計算精準平均（忽略 Null，包含 0）
 const getAvg = (docs, key) => {
   const validDocs = docs.filter((d) => d[key] !== null && d[key] !== undefined);
   if (validDocs.length === 0) return 0;
@@ -134,7 +134,7 @@ export default function App() {
   const [showInfoVolume, setShowInfoVolume] = useState(false);
   const [showInfoQuality, setShowInfoQuality] = useState(false);
   const [showInfoFinance, setShowInfoFinance] = useState(false);
-  const [showInfoRev, setShowInfoRev] = useState(false); // 新增營收視角開關
+  const [showInfoRev, setShowInfoRev] = useState(false);
 
   // 維護矩陣狀態
   const [maintYear, setMaintYear] = useState(
@@ -184,7 +184,7 @@ export default function App() {
     }
   };
 
-  // --- 每日動能計算 ---
+  // --- 每日動能計算 (含 LOCF 與評論預估) ---
   const dailyMetrics = useMemo(() => {
     const currentMonthDocs = dbData.filter(
       (d) => (d.month || d.date.slice(0, 7)) === selectedMonth
@@ -192,17 +192,64 @@ export default function App() {
     const [year, month] = selectedMonth.split("-").map(Number);
     const totalDays = new Date(year, month, 0).getDate();
 
+    // 建立按日期的時間軸排序
+    const uniqueDates = Array.from(
+      new Set(currentMonthDocs.map((d) => d.date))
+    ).sort();
+
+    // 建立分院狀態追蹤歷史 (LOCF 演算法)
+    let branchStateHistory = {};
+    let runningReviews = {};
+    BRANCHES.forEach((b) => (runningReviews[b] = null));
+
+    uniqueDates.forEach((dateStr) => {
+      BRANCHES.forEach((b) => {
+        const bDocs = currentMonthDocs
+          .filter((d) => d.date === dateStr && d.branch === b)
+          .sort((a, b) => b.timestamp - a.timestamp);
+        let activeData =
+          bDocs.length > 0
+            ? { ...bDocs[0] }
+            : { reviews: null, currentC: 0, currentS: 0, nextC: 0, nextS: 0 };
+
+        let rVal = activeData.reviews;
+        if (rVal === 0 || rVal === null || rVal === undefined || rVal === "") {
+          activeData.reviews = runningReviews[b];
+        } else {
+          runningReviews[b] = Number(rVal);
+          activeData.reviews = Number(rVal);
+        }
+        branchStateHistory[`${dateStr}_${b}`] = {
+          ...activeData,
+          date: dateStr,
+          branch: b,
+        };
+      });
+    });
+
     let branchSummary = [];
     let totalCurC = 0,
       totalCurS = 0,
+      totalCurR = 0,
       totalForeC = 0,
-      totalForeS = 0;
+      totalForeS = 0,
+      totalForeR = 0;
     let maxDayObserved = 1;
 
     BRANCHES.forEach((b) => {
       const bDocs = currentMonthDocs
         .filter((d) => d.branch === b)
         .sort((a, b) => a.day - b.day || a.timestamp - b.timestamp);
+
+      let curC = 0,
+        curS = 0,
+        nextC = 0,
+        nextS = 0,
+        avgC = 0,
+        avgS = 0,
+        foreC = 0,
+        foreS = 0;
+
       if (bDocs.length > 0) {
         const last = bDocs[bDocs.length - 1];
         const day = last.day || parseInt(last.date.split("-")[2], 10);
@@ -210,80 +257,97 @@ export default function App() {
           maxDayObserved = day;
         const minC = Math.min(...bDocs.map((d) => d.currentC || 0));
         const minS = Math.min(...bDocs.map((d) => d.currentS || 0));
-        const curC = last.currentC || 0;
-        const curS = last.currentS || 0;
+        curC = last.currentC || 0;
+        curS = last.currentS || 0;
+        nextC = last.nextC || 0;
+        nextS = last.nextS || 0;
         const rem = totalDays - day;
-        let avgC = 0,
-          foreC = curC;
         if (curC > minC && day > 0) {
           avgC = (curC - minC) / day;
           foreC = Math.round(curC + avgC * rem);
+        } else {
+          foreC = curC;
         }
-        let avgS = 0,
-          foreS = curS;
         if (curS > minS && day > 0) {
           avgS = (curS - minS) / day;
           foreS = Math.round(curS + avgS * rem);
+        } else {
+          foreS = curS;
         }
-        branchSummary.push({
-          branch: b,
-          curC,
-          curS,
-          nextC: last.nextC || 0,
-          nextS: last.nextS || 0,
-          avgC: avgC.toFixed(1),
-          avgS: avgS.toFixed(1),
-          reviews: last.reviews || 0,
-          isFiltered: selectedBranches.includes(b),
-        });
-        if (selectedBranches.includes(b)) {
-          totalCurC += curC;
-          totalCurS += curS;
-          totalForeC += foreC;
-          totalForeS += foreS;
-        }
-      } else {
-        branchSummary.push({
-          branch: b,
-          curC: 0,
-          curS: 0,
-          nextC: 0,
-          nextS: 0,
-          avgC: "0.0",
-          avgS: "0.0",
-          reviews: 0,
-          isFiltered: selectedBranches.includes(b),
-        });
+      }
+
+      // LOCF 評論數計算
+      const bLocfDocs = uniqueDates
+        .map((dateStr) => branchStateHistory[`${dateStr}_${b}`])
+        .filter(Boolean);
+      const validRevs = bLocfDocs
+        .map((d) => d.reviews)
+        .filter((r) => r !== null && r !== undefined && r > 0);
+      const minR = validRevs.length > 0 ? Math.min(...validRevs) : 0;
+      const curR = validRevs.length > 0 ? validRevs[validRevs.length - 1] : 0;
+
+      let dayForR = maxDayObserved;
+      const docWithLastValidR = bLocfDocs
+        .slice()
+        .reverse()
+        .find((d) => d.reviews > 0);
+      if (docWithLastValidR) {
+        dayForR =
+          parseInt(docWithLastValidR.date.split("-")[2], 10) || maxDayObserved;
+      }
+      const remR = totalDays - dayForR;
+      let avgR = 0,
+        foreR = curR;
+      if (curR > minR && dayForR > 0) {
+        avgR = (curR - minR) / dayForR;
+        foreR = Math.round(curR + avgR * remR);
+      }
+      const smoothedReview = curR;
+
+      branchSummary.push({
+        branch: b,
+        curC,
+        curS,
+        nextC,
+        nextS,
+        avgC: avgC.toFixed(1),
+        avgS: avgS.toFixed(1),
+        avgR: avgR.toFixed(1),
+        reviews: smoothedReview,
+        isFiltered: selectedBranches.includes(b),
+      });
+
+      if (selectedBranches.includes(b)) {
+        totalCurC += curC;
+        totalCurS += curS;
+        totalCurR += curR;
+        totalForeC += foreC;
+        totalForeS += foreS;
+        totalForeR += foreR;
       }
     });
 
-    const dailyLogsMap = {};
-    currentMonthDocs.forEach((d) => {
-      if (selectedBranches.includes(d.branch)) {
-        const k = `${d.date}_${d.branch}`;
-        if (!dailyLogsMap[k] || d.timestamp > dailyLogsMap[k].timestamp)
-          dailyLogsMap[k] = d;
-      }
+    const dailyLogs = [];
+    uniqueDates.forEach((dateStr) => {
+      BRANCHES.forEach((b) => {
+        const exists = currentMonthDocs.some(
+          (d) => d.date === dateStr && d.branch === b
+        );
+        if (exists && selectedBranches.includes(b)) {
+          const originalDoc = currentMonthDocs.find(
+            (d) => d.date === dateStr && d.branch === b
+          );
+          const smoothedReview =
+            branchStateHistory[`${dateStr}_${b}`]?.reviews || 0;
+          dailyLogs.push({ ...originalDoc, reviews: smoothedReview });
+        }
+      });
     });
-    const dailyLogs = Object.values(dailyLogsMap).sort(
+    dailyLogs.sort(
       (a, b) => b.date.localeCompare(a.date) || a.branch.localeCompare(b.branch)
     );
 
-    const uniqueDates = Array.from(
-      new Set(currentMonthDocs.map((d) => d.date))
-    ).sort();
     let chartDataAggregate = [];
-    let branchLatestChart = {};
-    BRANCHES.forEach(
-      (b) =>
-        (branchLatestChart[b] = {
-          currentC: 0,
-          currentS: 0,
-          nextC: 0,
-          nextS: 0,
-          reviews: 0,
-        })
-    );
     uniqueDates.forEach((dateStr) => {
       let aggRow = {
         date: dateStr.slice(5),
@@ -294,35 +358,32 @@ export default function App() {
         reviews: 0,
       };
       BRANCHES.forEach((b) => {
-        const bData = currentMonthDocs.filter(
-          (d) => d.date === dateStr && d.branch === b
-        );
-        if (bData.length > 0)
-          branchLatestChart[b] = bData.sort(
-            (a, b) => b.timestamp - a.timestamp
-          )[0];
-        const activeData = branchLatestChart[b];
+        const activeData = branchStateHistory[`${dateStr}_${b}`];
         if (activeData && selectedBranches.includes(b)) {
+          const revs = activeData.reviews || 0;
           aggRow.currentC += activeData.currentC || 0;
           aggRow.currentS += activeData.currentS || 0;
           aggRow.nextC += activeData.nextC || 0;
           aggRow.nextS += activeData.nextS || 0;
-          aggRow.reviews += activeData.reviews || 0;
+          aggRow.reviews += revs;
           aggRow[`${b}_currentC`] = activeData.currentC || 0;
           aggRow[`${b}_currentS`] = activeData.currentS || 0;
           aggRow[`${b}_nextC`] = activeData.nextC || 0;
           aggRow[`${b}_nextS`] = activeData.nextS || 0;
-          aggRow[`${b}_reviews`] = activeData.reviews || 0;
+          aggRow[`${b}_reviews`] = revs;
         }
       });
       chartDataAggregate.push(aggRow);
     });
+
     return {
       branchSummary,
       totalCurC,
       totalCurS,
+      totalCurR,
       totalForeC,
       totalForeS,
+      totalForeR,
       maxDayObserved,
       totalDays,
       dailyLogs,
@@ -447,7 +508,65 @@ export default function App() {
       };
     });
 
-    // 2. 月度 YoY 對比
+    // 2. 歷年季節常態模型大腦
+    const currentYearStr = new Date().getFullYear().toString();
+    const completedYearDocs = processedHistory.filter(
+      (d) => d.year < currentYearStr
+    );
+
+    const seasonalityBaseline = MONTHS.map((m) => {
+      const targetMonthDocs = completedYearDocs.filter(
+        (d) =>
+          d.month === m &&
+          (isAgg ? BRANCHES.includes(d.branch) : d.branch === stratBranch)
+      );
+      const targetGroupDocs = completedYearDocs.filter(
+        (d) => d.month === m && d.branch === "全院總計"
+      );
+
+      const avgConsultation = getAvg(targetMonthDocs, "consultation");
+      const avgSurgery = getAvg(targetMonthDocs, "surgery");
+      const avgRevenue = getAvg(targetMonthDocs, "revenue");
+
+      let avgConversion = getAvg(targetMonthDocs, "conv");
+      let avgSuccess = getAvg(targetMonthDocs, "succ");
+
+      if (
+        isAgg &&
+        targetGroupDocs.some((d) => d.conv !== null && d.conv !== undefined)
+      )
+        avgConversion = getAvg(targetGroupDocs, "conv");
+      if (
+        isAgg &&
+        targetGroupDocs.some((d) => d.succ !== null && d.succ !== undefined)
+      )
+        avgSuccess = getAvg(targetGroupDocs, "succ");
+
+      const validSurRevDocs = targetMonthDocs.filter(
+        (d) => d.surgery !== null && d.revenue !== null
+      );
+      const sumSur = validSurRevDocs.reduce(
+        (acc, cur) => acc + Number(cur.surgery),
+        0
+      );
+      const sumRev = validSurRevDocs.reduce(
+        (acc, cur) => acc + Number(cur.revenue),
+        0
+      );
+      const avgASP = sumSur > 0 ? Math.round(sumRev / sumSur) : 0;
+
+      return {
+        name: `${m}月`,
+        avgConsultation: Math.round(avgConsultation),
+        avgSurgery: Math.round(avgSurgery),
+        avgConversion: avgConversion,
+        avgSuccess: avgSuccess,
+        avgASP: avgASP,
+        avgRevenue: Math.round(avgRevenue),
+      };
+    });
+
+    // 3. 月度 YoY 對比
     const prevYear = (parseInt(stratBaseYear) - 1).toString();
     const monthlyYoY = MONTHS.map((m) => {
       const curBranchDocs = branchDocs.filter(
@@ -501,79 +620,33 @@ export default function App() {
         if (key === "surgery") return obj.surgery;
         if (key === "conversion") return obj.conv;
         if (key === "success") return obj.succ;
-        if (key === "asp") return obj.asp; // 新增 ASP 數值抓取
+        if (key === "asp") return obj.asp;
         return null;
       };
 
       const cV = getVal(curData, stratMetric);
       const pV = getVal(prevData, stratMetric);
 
+      const baseline = seasonalityBaseline.find((b) => b.name === `${m}月`);
+      let histAvg = null;
+      if (baseline) {
+        if (stratMetric === "revenue") histAvg = baseline.avgRevenue;
+        else if (stratMetric === "consultation")
+          histAvg = baseline.avgConsultation;
+        else if (stratMetric === "surgery") histAvg = baseline.avgSurgery;
+        else if (stratMetric === "conversion") histAvg = baseline.avgConversion;
+        else if (stratMetric === "success") histAvg = baseline.avgSuccess;
+        else if (stratMetric === "asp") histAvg = baseline.avgASP;
+      }
+
       return {
         name: `${m}月`,
         baseVal: cV,
         prevVal: pV,
+        historyAvg: histAvg,
         yoy: calcYoY(cV, pV),
         curData: curData || {},
         prevData: prevData || {},
-      };
-    });
-
-    // 3. 歷年季節常態模型大腦
-    const currentYearStr = new Date().getFullYear().toString();
-    const completedYearDocs = processedHistory.filter(
-      (d) => d.year < currentYearStr
-    );
-
-    const seasonalityBaseline = MONTHS.map((m) => {
-      const targetMonthDocs = completedYearDocs.filter(
-        (d) =>
-          d.month === m &&
-          (isAgg ? BRANCHES.includes(d.branch) : d.branch === stratBranch)
-      );
-      const targetGroupDocs = completedYearDocs.filter(
-        (d) => d.month === m && d.branch === "全院總計"
-      );
-
-      const avgConsultation = getAvg(targetMonthDocs, "consultation");
-      const avgSurgery = getAvg(targetMonthDocs, "surgery");
-      const avgRevenue = getAvg(targetMonthDocs, "revenue"); // 新增：歷年平均營收
-
-      let avgConversion = getAvg(targetMonthDocs, "conv");
-      let avgSuccess = getAvg(targetMonthDocs, "succ");
-
-      // 優先抓取全院總計的常態均值
-      if (
-        isAgg &&
-        targetGroupDocs.some((d) => d.conv !== null && d.conv !== undefined)
-      )
-        avgConversion = getAvg(targetGroupDocs, "conv");
-      if (
-        isAgg &&
-        targetGroupDocs.some((d) => d.succ !== null && d.succ !== undefined)
-      )
-        avgSuccess = getAvg(targetGroupDocs, "succ");
-
-      const validSurRevDocs = targetMonthDocs.filter(
-        (d) => d.surgery !== null && d.revenue !== null
-      );
-      const sumSur = validSurRevDocs.reduce(
-        (acc, cur) => acc + Number(cur.surgery),
-        0
-      );
-      const sumRev = validSurRevDocs.reduce(
-        (acc, cur) => acc + Number(cur.revenue),
-        0
-      );
-      const avgASP = sumSur > 0 ? Math.round(sumRev / sumSur) : 0;
-
-      return {
-        name: `${m}月`,
-        avgConsultation: Math.round(avgConsultation),
-        avgSurgery: Math.round(avgSurgery),
-        avgConversion: avgConversion,
-        avgSuccess: avgSuccess,
-        avgASP: avgASP,
-        avgRevenue: Math.round(avgRevenue), // 新增：歷年平均營收
       };
     });
 
@@ -980,14 +1053,22 @@ export default function App() {
                             +{s.avgS}
                           </span>
                         </div>
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-slate-400 font-bold">
+                            評論:
+                          </span>
+                          <span className="font-black text-amber-500">
+                            +{s.avgR}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* 預估落點卡片 */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* 預估落點卡片 (升級為三卡片陣列) */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-gradient-to-br from-blue-600 to-blue-800 p-6 rounded-[2rem] text-white shadow-xl shadow-blue-100 relative overflow-hidden">
                   <Activity className="absolute -right-4 -bottom-4 w-32 h-32 opacity-10" />
                   <p className="text-xs font-bold opacity-70 uppercase tracking-widest">
@@ -1019,6 +1100,25 @@ export default function App() {
                   <div className="mt-6 flex gap-4 text-[10px] font-black uppercase">
                     <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
                       累積: {dailyMetrics.totalCurS}
+                    </div>
+                    <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
+                      進度: {dailyMetrics.maxDayObserved} /{" "}
+                      {dailyMetrics.totalDays} 天
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-gradient-to-br from-amber-500 to-amber-700 p-6 rounded-[2rem] text-white shadow-xl shadow-amber-100 relative overflow-hidden">
+                  <Star className="absolute -right-4 -bottom-4 w-32 h-32 opacity-10" />
+                  <p className="text-xs font-bold opacity-70 uppercase tracking-widest">
+                    本月評論預估落點
+                  </p>
+                  <h3 className="text-5xl font-black mt-2">
+                    {dailyMetrics.totalForeR}{" "}
+                    <span className="text-sm font-normal opacity-50">則</span>
+                  </h3>
+                  <div className="mt-6 flex gap-4 text-[10px] font-black uppercase">
+                    <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
+                      累積: {dailyMetrics.totalCurR}
                     </div>
                     <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
                       進度: {dailyMetrics.maxDayObserved} /{" "}
@@ -1553,7 +1653,6 @@ export default function App() {
                     ))}
                   </select>
                   <div className="bg-slate-100 p-1.5 rounded-2xl flex gap-1 text-[10px] font-black uppercase">
-                    {/* 💡 新增 ASP 選項 */}
                     {[
                       { id: "revenue", label: "營收", icon: DollarSign },
                       { id: "consultation", label: "諮詢", icon: Activity },
@@ -1596,12 +1695,38 @@ export default function App() {
                       tickLine={false}
                       tick={{ fontSize: 11, fontWeight: 700, fill: "#94a3b8" }}
                       domain={["auto", "auto"]}
+                      tickFormatter={(val) => {
+                        if (stratMetric === "revenue")
+                          return `$${(val / 10000).toFixed(0)}萬`;
+                        if (stratMetric === "asp")
+                          return `$${val.toLocaleString()}`;
+                        if (
+                          stratMetric === "conversion" ||
+                          stratMetric === "success"
+                        )
+                          return `${val}%`;
+                        return val;
+                      }}
                     />
                     <Tooltip
                       contentStyle={{
                         borderRadius: "20px",
                         border: "none",
                         boxShadow: "0 20px 25px -5px rgb(0 0 0 / 0.1)",
+                      }}
+                      formatter={(value, name) => {
+                        if (value === null || value === undefined)
+                          return ["--", name];
+                        if (stratMetric === "revenue")
+                          return [`$${(value / 10000).toFixed(0)}萬`, name];
+                        if (stratMetric === "asp")
+                          return [`$${Number(value).toLocaleString()}`, name];
+                        if (
+                          stratMetric === "conversion" ||
+                          stratMetric === "success"
+                        )
+                          return [`${value}%`, name];
+                        return [value, name];
                       }}
                     />
                     <Legend verticalAlign="top" height={36} iconType="circle" />
@@ -1623,6 +1748,16 @@ export default function App() {
                       strokeWidth={3}
                       strokeDasharray="5 5"
                       dot={{ r: 4, fill: "#cbd5e1" }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="historyAvg"
+                      connectNulls={false}
+                      name="歷年常態平均"
+                      stroke="#10b981"
+                      strokeWidth={3}
+                      strokeDasharray="3 3"
+                      dot={{ r: 4, fill: "#10b981" }}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -1653,7 +1788,6 @@ export default function App() {
                           {m.name}
                         </td>
                         <td className="p-4 text-slate-900 font-black text-sm">
-                          {/* 💡 新增 ASP 的格式化顯示 */}
                           {m.baseVal === null
                             ? "--"
                             : stratMetric === "revenue"
@@ -1970,7 +2104,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 💡 3-D. 新增營收視角淡旺季 */}
+              {/* 3-D. 營收視角淡旺季 */}
               <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 relative">
                 <div className="flex justify-between items-center mb-6">
                   <div className="flex items-center gap-2">
