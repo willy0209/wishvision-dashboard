@@ -43,6 +43,7 @@ import {
   X,
   HelpCircle,
   Info,
+  Sparkles,
 } from "lucide-react";
 
 // --- 1. 配置與初始化 ---
@@ -71,6 +72,15 @@ const METRICS = [
   { key: "currentS", label: "本月手術", color: "#16a34a" },
   { key: "nextS", label: "下月手術", color: "#06b6d4" },
 ];
+
+// --- 🔑 Google Places API 設定 ---
+const GOOGLE_API_KEY = "AIzaSyDSUvpggI_9eUomipSO0wnBhAqLcH1k75U";
+const PLACE_IDS = {
+  台北館前院: "ChIJOUn0JHOpQjQR8Ta_Y_gRO84",
+  台北仁愛院: "ChIJz9OotYSrQjQRnSVsov3Vy7g",
+  台中東興院: "ChIJWzXUcuI9aTQReoSSKPzkDGk",
+  新竹光明院: "ChIJeR9GzQo3aDQR5YcSkFT-ljQ",
+};
 
 // 輔助函數：計算 YoY
 const calcYoY = (cur, prev) => {
@@ -149,6 +159,7 @@ export default function App() {
     msg: "",
     type: "",
   });
+  const [isFetchingReviews, setIsFetchingReviews] = useState(false);
 
   // --- 數據監聽 ---
   useEffect(() => {
@@ -654,6 +665,54 @@ export default function App() {
   }, [historyData, stratFilterMode, stratBranch, stratBaseYear, stratMetric]);
 
   // --- 6. 事件處理 ---
+  const handleFetchReviews = async () => {
+    const placeId = PLACE_IDS[formData.branch];
+    if (!placeId) {
+      setUiStatus({
+        loading: false,
+        msg: "找不到該分院的 Place ID",
+        type: "error",
+      });
+      setTimeout(
+        () => setUiStatus({ loading: false, msg: "", type: "" }),
+        3000
+      );
+      return;
+    }
+
+    setIsFetchingReviews(true);
+    try {
+      const url = `https://places.googleapis.com/v1/places/${placeId}?fields=userRatingCount&key=${GOOGLE_API_KEY}`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("API 請求失敗");
+
+      const data = await response.json();
+      if (data.userRatingCount !== undefined) {
+        setFormData({ ...formData, reviews: data.userRatingCount.toString() });
+        setUiStatus({
+          loading: false,
+          msg: `✨ 同步成功！${formData.branch} 最新評論為 ${data.userRatingCount} 則`,
+          type: "success",
+        });
+      } else {
+        throw new Error("無法獲取評論數");
+      }
+    } catch (error) {
+      console.error("Fetch reviews error:", error);
+      setUiStatus({
+        loading: false,
+        msg: "同步失敗，請確認網路連線或 API 金鑰限制",
+        type: "error",
+      });
+    } finally {
+      setIsFetchingReviews(false);
+      setTimeout(
+        () => setUiStatus({ loading: false, msg: "", type: "" }),
+        4000
+      );
+    }
+  };
+
   const handleDailySubmit = async (e) => {
     e.preventDefault();
     setUiStatus({ loading: true, msg: "儲存中...", type: "info" });
@@ -921,9 +980,24 @@ export default function App() {
                       </div>
                     </div>
                     <div className="bg-amber-50/50 p-4 rounded-2xl space-y-2">
-                      <p className="text-[10px] font-bold text-amber-600">
-                        口碑指標
-                      </p>
+                      <div className="flex justify-between items-center">
+                        <p className="text-[10px] font-bold text-amber-600">
+                          口碑指標
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleFetchReviews}
+                          disabled={isFetchingReviews}
+                          className="text-[10px] bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white px-3 py-1 rounded-lg flex items-center gap-1 transition-all shadow-sm"
+                        >
+                          {isFetchingReviews ? (
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Sparkles className="w-3 h-3" />
+                          )}
+                          智能同步
+                        </button>
+                      </div>
                       <input
                         type="number"
                         placeholder="Google 評論總則數"
