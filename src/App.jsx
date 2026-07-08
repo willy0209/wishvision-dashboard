@@ -195,7 +195,7 @@ export default function App() {
     }
   };
 
-  // --- 每日動能計算 (含 LOCF 與評論預估) ---
+  // --- 每日動能計算 (含全局 LOCF 與新增數) ---
   const dailyMetrics = useMemo(() => {
     const currentMonthDocs = dbData.filter(
       (d) => (d.month || d.date.slice(0, 7)) === selectedMonth
@@ -208,28 +208,52 @@ export default function App() {
       new Set(currentMonthDocs.map((d) => d.date))
     ).sort();
 
-    // 建立分院狀態追蹤歷史 (LOCF 演算法)
+    // 建立分院狀態追蹤歷史 (LOCF 演算法 - 全面套用於所有指標)
     let branchStateHistory = {};
-    let runningReviews = {};
-    BRANCHES.forEach((b) => (runningReviews[b] = null));
+    let runningState = {};
+    BRANCHES.forEach((b) => {
+      runningState[b] = {
+        currentC: 0,
+        currentS: 0,
+        nextC: 0,
+        nextS: 0,
+        reviews: null,
+      };
+    });
 
     uniqueDates.forEach((dateStr) => {
       BRANCHES.forEach((b) => {
         const bDocs = currentMonthDocs
           .filter((d) => d.date === dateStr && d.branch === b)
           .sort((a, b) => b.timestamp - a.timestamp);
-        let activeData =
-          bDocs.length > 0
-            ? { ...bDocs[0] }
-            : { reviews: null, currentC: 0, currentS: 0, nextC: 0, nextS: 0 };
 
-        let rVal = activeData.reviews;
-        if (rVal === 0 || rVal === null || rVal === undefined || rVal === "") {
-          activeData.reviews = runningReviews[b];
-        } else {
-          runningReviews[b] = Number(rVal);
-          activeData.reviews = Number(rVal);
+        let activeData = { ...runningState[b] }; // 繼承上一筆狀態
+
+        if (bDocs.length > 0) {
+          const doc = bDocs[0];
+
+          // Google 評論防呆
+          let rVal = doc.reviews;
+          if (
+            rVal !== 0 &&
+            rVal !== null &&
+            rVal !== undefined &&
+            rVal !== ""
+          ) {
+            activeData.reviews = Number(rVal);
+            runningState[b].reviews = activeData.reviews;
+          }
+
+          // 其他流量指標防呆 (諮詢、手術、預約)
+          ["currentC", "currentS", "nextC", "nextS"].forEach((k) => {
+            let val = doc[k];
+            if (val !== null && val !== undefined && val !== "") {
+              activeData[k] = Number(val);
+              runningState[b][k] = activeData[k];
+            }
+          });
         }
+
         branchStateHistory[`${dateStr}_${b}`] = {
           ...activeData,
           date: dateStr,
@@ -242,15 +266,17 @@ export default function App() {
     let totalCurC = 0,
       totalCurS = 0,
       totalCurR = 0,
+      totalFirstDayR = 0,
       totalForeC = 0,
       totalForeS = 0,
       totalForeR = 0;
     let maxDayObserved = 1;
 
     BRANCHES.forEach((b) => {
-      const bDocs = currentMonthDocs
-        .filter((d) => d.branch === b)
-        .sort((a, b) => a.day - b.day || a.timestamp - b.timestamp);
+      // 獲取該分院當月所有 LOCF 填補後的歷史紀錄
+      const bLocfDocs = uniqueDates
+        .map((dateStr) => branchStateHistory[`${dateStr}_${b}`])
+        .filter(Boolean);
 
       let curC = 0,
         curS = 0,
@@ -261,41 +287,55 @@ export default function App() {
         foreC = 0,
         foreS = 0;
 
-      if (bDocs.length > 0) {
-        const last = bDocs[bDocs.length - 1];
-        const day = last.day || parseInt(last.date.split("-")[2], 10);
-        if (selectedBranches.includes(b) && day > maxDayObserved)
+      if (bLocfDocs.length > 0) {
+        const lastLocf = bLocfDocs[bLocfDocs.length - 1];
+        curC = lastLocf.currentC || 0;
+        curS = lastLocf.currentS || 0;
+        nextC = lastLocf.nextC || 0;
+        nextS = lastLocf.nextS || 0;
+
+        // 計算最大天數 (以有真實填寫紀錄的最後一天為主)
+        const bRealDocs = currentMonthDocs
+          .filter((d) => d.branch === b)
+          .sort((a, b) => a.day - b.day);
+
+        const day =
+          bRealDocs.length > 0
+            ? bRealDocs[bRealDocs.length - 1].day ||
+              parseInt(bRealDocs[bRealDocs.length - 1].date.split("-")[2], 10)
+            : 1;
+
+        if (selectedBranches.includes(b) && day > maxDayObserved) {
           maxDayObserved = day;
-        const minC = Math.min(...bDocs.map((d) => d.currentC || 0));
-        const minS = Math.min(...bDocs.map((d) => d.currentS || 0));
-        curC = last.currentC || 0;
-        curS = last.currentS || 0;
-        nextC = last.nextC || 0;
-        nextS = last.nextS || 0;
+        }
+
+        const safeMinC = bLocfDocs.find((d) => d.currentC > 0)?.currentC || 0;
+        const safeMinS = bLocfDocs.find((d) => d.currentS > 0)?.currentS || 0;
+
         const rem = totalDays - day;
-        if (curC > minC && day > 0) {
-          avgC = (curC - minC) / day;
+
+        if (curC > safeMinC && day > 0) {
+          avgC = (curC - safeMinC) / day;
           foreC = Math.round(curC + avgC * rem);
         } else {
           foreC = curC;
         }
-        if (curS > minS && day > 0) {
-          avgS = (curS - minS) / day;
+
+        if (curS > safeMinS && day > 0) {
+          avgS = (curS - safeMinS) / day;
           foreS = Math.round(curS + avgS * rem);
         } else {
           foreS = curS;
         }
       }
 
-      // LOCF 評論數計算
-      const bLocfDocs = uniqueDates
-        .map((dateStr) => branchStateHistory[`${dateStr}_${b}`])
-        .filter(Boolean);
+      // 評論指標計算
       const validRevs = bLocfDocs
         .map((d) => d.reviews)
         .filter((r) => r !== null && r !== undefined && r > 0);
       const minR = validRevs.length > 0 ? Math.min(...validRevs) : 0;
       const curR = validRevs.length > 0 ? validRevs[validRevs.length - 1] : 0;
+      const firstDayR = validRevs.length > 0 ? validRevs[0] : 0; // 本月第一筆有效資料
 
       let dayForR = maxDayObserved;
       const docWithLastValidR = bLocfDocs
@@ -306,6 +346,7 @@ export default function App() {
         dayForR =
           parseInt(docWithLastValidR.date.split("-")[2], 10) || maxDayObserved;
       }
+
       const remR = totalDays - dayForR;
       let avgR = 0,
         foreR = curR;
@@ -313,7 +354,6 @@ export default function App() {
         avgR = (curR - minR) / dayForR;
         foreR = Math.round(curR + avgR * remR);
       }
-      const smoothedReview = curR;
 
       branchSummary.push({
         branch: b,
@@ -324,7 +364,7 @@ export default function App() {
         avgC: avgC.toFixed(1),
         avgS: avgS.toFixed(1),
         avgR: avgR.toFixed(1),
-        reviews: smoothedReview,
+        reviews: curR,
         isFiltered: selectedBranches.includes(b),
       });
 
@@ -332,12 +372,16 @@ export default function App() {
         totalCurC += curC;
         totalCurS += curS;
         totalCurR += curR;
+        totalFirstDayR += firstDayR;
         totalForeC += foreC;
         totalForeS += foreS;
         totalForeR += foreR;
       }
     });
 
+    const thisMonthNewR = totalCurR - totalFirstDayR;
+
+    // Daily Logs 呈現平滑後的數據
     const dailyLogs = [];
     uniqueDates.forEach((dateStr) => {
       BRANCHES.forEach((b) => {
@@ -348,9 +392,15 @@ export default function App() {
           const originalDoc = currentMonthDocs.find(
             (d) => d.date === dateStr && d.branch === b
           );
-          const smoothedReview =
-            branchStateHistory[`${dateStr}_${b}`]?.reviews || 0;
-          dailyLogs.push({ ...originalDoc, reviews: smoothedReview });
+          const smoothedData = branchStateHistory[`${dateStr}_${b}`];
+          dailyLogs.push({
+            ...originalDoc,
+            currentC: smoothedData.currentC || 0,
+            currentS: smoothedData.currentS || 0,
+            nextC: smoothedData.nextC || 0,
+            nextS: smoothedData.nextS || 0,
+            reviews: smoothedData.reviews || 0,
+          });
         }
       });
     });
@@ -359,6 +409,7 @@ export default function App() {
     );
 
     let chartDataAggregate = [];
+    let previousBranchRevs = {}; // 追蹤昨天的評論數以計算每日新增
     uniqueDates.forEach((dateStr) => {
       let aggRow = {
         date: dateStr.slice(5),
@@ -367,23 +418,35 @@ export default function App() {
         nextC: 0,
         nextS: 0,
         reviews: 0,
+        newReviews: 0,
       };
+      let totalNewRevForDay = 0;
+
       BRANCHES.forEach((b) => {
         const activeData = branchStateHistory[`${dateStr}_${b}`];
         if (activeData && selectedBranches.includes(b)) {
           const revs = activeData.reviews || 0;
+          const prevRev =
+            previousBranchRevs[b] !== undefined ? previousBranchRevs[b] : revs;
+          const newRev = Math.max(0, revs - prevRev);
+          previousBranchRevs[b] = revs;
+          totalNewRevForDay += newRev;
+
           aggRow.currentC += activeData.currentC || 0;
           aggRow.currentS += activeData.currentS || 0;
           aggRow.nextC += activeData.nextC || 0;
           aggRow.nextS += activeData.nextS || 0;
           aggRow.reviews += revs;
+
           aggRow[`${b}_currentC`] = activeData.currentC || 0;
           aggRow[`${b}_currentS`] = activeData.currentS || 0;
           aggRow[`${b}_nextC`] = activeData.nextC || 0;
           aggRow[`${b}_nextS`] = activeData.nextS || 0;
           aggRow[`${b}_reviews`] = revs;
+          aggRow[`${b}_newReviews`] = newRev;
         }
       });
+      aggRow.newReviews = totalNewRevForDay;
       chartDataAggregate.push(aggRow);
     });
 
@@ -392,6 +455,7 @@ export default function App() {
       totalCurC,
       totalCurS,
       totalCurR,
+      thisMonthNewR,
       totalForeC,
       totalForeS,
       totalForeR,
@@ -852,27 +916,49 @@ export default function App() {
   const renderDailyReviewsLines = () => {
     if (dailyViewMode === "aggregate") {
       return (
-        <Line
-          type="monotone"
-          dataKey="reviews"
-          name="總評論數(所選分院加總)"
-          stroke="#f59e0b"
-          strokeWidth={4}
-          dot={{ r: 4 }}
-        />
+        <>
+          <Bar
+            yAxisId="left"
+            dataKey="newReviews"
+            name="每日新增 (所選分院)"
+            fill="#f59e0b"
+            barSize={20}
+            radius={[4, 4, 0, 0]}
+          />
+          <Line
+            yAxisId="right"
+            type="monotone"
+            dataKey="reviews"
+            name="累積總數 (所選分院)"
+            stroke="#d97706"
+            strokeWidth={4}
+            dot={{ r: 4 }}
+          />
+        </>
       );
     } else {
       const colors = ["#2563eb", "#16a34a", "#7c3aed", "#06b6d4"];
       return selectedBranches.map((b, idx) => (
-        <Line
-          key={`${b}_reviews`}
-          type="monotone"
-          dataKey={`${b}_reviews`}
-          name={`${b} 評論`}
-          stroke={colors[idx % colors.length]}
-          strokeWidth={2}
-          dot={{ r: 3 }}
-        />
+        <React.Fragment key={`${b}_reviews`}>
+          <Bar
+            yAxisId="left"
+            dataKey={`${b}_newReviews`}
+            name={`${b} 新增`}
+            fill={colors[idx % colors.length]}
+            opacity={0.5}
+            barSize={12}
+            radius={[2, 2, 0, 0]}
+          />
+          <Line
+            yAxisId="right"
+            type="monotone"
+            dataKey={`${b}_reviews`}
+            name={`${b} 累積`}
+            stroke={colors[idx % colors.length]}
+            strokeWidth={2}
+            dot={{ r: 3 }}
+          />
+        </React.Fragment>
       ));
     }
   };
@@ -1141,7 +1227,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 預估落點卡片 (升級為三卡片陣列) */}
+              {/* 預估落點卡片 */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-gradient-to-br from-blue-600 to-blue-800 p-6 rounded-[2rem] text-white shadow-xl shadow-blue-100 relative overflow-hidden">
                   <Activity className="absolute -right-4 -bottom-4 w-32 h-32 opacity-10" />
@@ -1152,7 +1238,7 @@ export default function App() {
                     {dailyMetrics.totalForeC}{" "}
                     <span className="text-sm font-normal opacity-50">人</span>
                   </h3>
-                  <div className="mt-6 flex gap-4 text-[10px] font-black uppercase">
+                  <div className="mt-6 flex flex-wrap gap-2 text-[10px] font-black uppercase">
                     <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
                       累積: {dailyMetrics.totalCurC}
                     </div>
@@ -1171,7 +1257,7 @@ export default function App() {
                     {dailyMetrics.totalForeS}{" "}
                     <span className="text-sm font-normal opacity-50">台</span>
                   </h3>
-                  <div className="mt-6 flex gap-4 text-[10px] font-black uppercase">
+                  <div className="mt-6 flex flex-wrap gap-2 text-[10px] font-black uppercase">
                     <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
                       累積: {dailyMetrics.totalCurS}
                     </div>
@@ -1190,9 +1276,12 @@ export default function App() {
                     {dailyMetrics.totalForeR}{" "}
                     <span className="text-sm font-normal opacity-50">則</span>
                   </h3>
-                  <div className="mt-6 flex gap-4 text-[10px] font-black uppercase">
+                  <div className="mt-6 flex flex-wrap gap-2 text-[10px] font-black uppercase">
                     <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
                       累積: {dailyMetrics.totalCurR}
+                    </div>
+                    <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
+                      本月新增: {dailyMetrics.thisMonthNewR}
                     </div>
                     <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm">
                       進度: {dailyMetrics.maxDayObserved} /{" "}
@@ -1271,7 +1360,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 口碑聲量圖 */}
+              {/* 口碑聲量圖 (雙 Y 軸) */}
               <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
                 <h3 className="text-sm font-black text-slate-800 mb-6 flex items-center gap-2">
                   <Star className="w-4 h-4 text-amber-500 fill-amber-500" />{" "}
@@ -1279,7 +1368,7 @@ export default function App() {
                 </h3>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={dailyMetrics.chartData}>
+                    <ComposedChart data={dailyMetrics.chartData}>
                       <CartesianGrid
                         strokeDasharray="3 3"
                         vertical={false}
@@ -1292,6 +1381,15 @@ export default function App() {
                         tickLine={false}
                       />
                       <YAxis
+                        yAxisId="left"
+                        tick={{ fontSize: 10, fontWeight: 700 }}
+                        axisLine={false}
+                        tickLine={false}
+                        allowDecimals={false}
+                      />
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
                         tick={{ fontSize: 10, fontWeight: 700 }}
                         axisLine={false}
                         tickLine={false}
@@ -1308,7 +1406,7 @@ export default function App() {
                         wrapperStyle={{ fontSize: "10px", fontWeight: 900 }}
                       />
                       {renderDailyReviewsLines()}
-                    </LineChart>
+                    </ComposedChart>
                   </ResponsiveContainer>
                 </div>
               </div>
