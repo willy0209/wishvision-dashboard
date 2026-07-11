@@ -145,6 +145,7 @@ export default function App() {
   const [showInfoQuality, setShowInfoQuality] = useState(false);
   const [showInfoFinance, setShowInfoFinance] = useState(false);
   const [showInfoRev, setShowInfoRev] = useState(false);
+  const [showInfoReviewNew, setShowInfoReviewNew] = useState(false);
 
   // 維護矩陣狀態
   const [maintYear, setMaintYear] = useState(
@@ -379,7 +380,8 @@ export default function App() {
       }
     });
 
-    const thisMonthNewR = totalCurR - totalFirstDayR;
+    const thisMonthNewR =
+      totalCurR > 0 && totalFirstDayR > 0 ? totalCurR - totalFirstDayR : 0;
 
     // Daily Logs 呈現平滑後的數據
     const dailyLogs = [];
@@ -466,7 +468,7 @@ export default function App() {
     };
   }, [dbData, selectedMonth, selectedBranches]);
 
-  // --- 5. 戰略看板數據矩陣 ---
+  // --- 5. 戰略看板數據矩陣 (全圖表套用 Rolling Baseline) ---
   const strategyData = useMemo(() => {
     const processedHistory = historyData.map((d) => ({
       ...d,
@@ -503,6 +505,52 @@ export default function App() {
       isAgg ? BRANCHES.includes(d.branch) : d.branch === stratBranch
     );
     const groupDocs = processedHistory.filter((d) => d.branch === "全院總計");
+
+    // 💡 解析每日紀錄，生成全年度的評論月數據
+    const monthlyReviewsMap = {};
+    BRANCHES.forEach((b) => {
+      const bDailyDocs = dbData
+        .filter((d) => d.branch === b)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      let prevMonthLastReview = 0;
+      const bMonths = Array.from(
+        new Set(bDailyDocs.map((d) => d.date.slice(0, 7)))
+      );
+      bMonths.forEach((ym) => {
+        const ymDocs = bDailyDocs.filter((d) => d.date.startsWith(ym));
+
+        // 抓取當月有效(大於0)的紀錄
+        const validDocs = ymDocs.filter((d) => d.reviews > 0);
+        const total =
+          validDocs.length > 0 ? validDocs[validDocs.length - 1].reviews : 0;
+
+        let newRevs = 0;
+        if (total > 0) {
+          if (prevMonthLastReview > 0) {
+            newRevs = Math.max(0, total - prevMonthLastReview);
+          } else {
+            // 這是該分院歷史上第一個有資料的月份(例如6月)，抓取該月第一筆有效資料做為起始基準
+            const firstValidRev = validDocs[0].reviews;
+            newRevs = Math.max(0, total - firstValidRev);
+          }
+          prevMonthLastReview = total;
+        }
+        monthlyReviewsMap[`${ym}_${b}`] = { total, new: newRevs };
+      });
+    });
+
+    const getRevData = (ym, branchesArr) => {
+      let total = null;
+      let newRev = null;
+      branchesArr.forEach((b) => {
+        const d = monthlyReviewsMap[`${ym}_${b}`];
+        if (d && d.total > 0) {
+          total = (total || 0) + d.total;
+          newRev = (newRev || 0) + d.new;
+        }
+      });
+      return { total, newRev };
+    };
 
     // 1. 年度趨勢
     const yearlyTrend = YEARS.map((y) => {
@@ -566,6 +614,40 @@ export default function App() {
       )
         prevSucc = getAvg(pGroupDocs, "succ");
 
+      // 抓取年度最後一個有效月份的總評論數
+      let curRevTotal = null;
+      let prevRevTotal = null;
+      const targetBranches = isAgg ? BRANCHES : [stratBranch];
+
+      targetBranches.forEach((b) => {
+        let lastTotal = null;
+        for (let m = 12; m >= 1; m--) {
+          const ym = `${y}-${m.toString().padStart(2, "0")}`;
+          if (
+            monthlyReviewsMap[`${ym}_${b}`] &&
+            monthlyReviewsMap[`${ym}_${b}`].total > 0
+          ) {
+            lastTotal = monthlyReviewsMap[`${ym}_${b}`].total;
+            break;
+          }
+        }
+        if (lastTotal !== null) curRevTotal = (curRevTotal || 0) + lastTotal;
+
+        let pLastTotal = null;
+        for (let m = 12; m >= 1; m--) {
+          const ym = `${prevYear}-${m.toString().padStart(2, "0")}`;
+          if (
+            monthlyReviewsMap[`${ym}_${b}`] &&
+            monthlyReviewsMap[`${ym}_${b}`].total > 0
+          ) {
+            pLastTotal = monthlyReviewsMap[`${ym}_${b}`].total;
+            break;
+          }
+        }
+        if (pLastTotal !== null)
+          prevRevTotal = (prevRevTotal || 0) + pLastTotal;
+      });
+
       return {
         name: y,
         revenue: curRev,
@@ -574,28 +656,41 @@ export default function App() {
         conv: avgConv,
         succ: avgSucc,
         asp: asp,
+        reviewTotal: curRevTotal,
         yoyRev: calcYoY(curRev, prevRev),
         yoySur: calcYoY(curSur, prevSur),
         yoyCon: calcYoY(curCon, prevCon),
         yoyConv: calcYoY(avgConv, prevConv),
         yoySucc: calcYoY(avgSucc, prevSucc),
         yoyAsp: calcYoY(asp, prevAsp),
+        yoyReviewTotal: calcYoY(curRevTotal, prevRevTotal),
       };
     });
 
-    // 2. 歷年季節常態模型大腦
-    const currentYearStr = new Date().getFullYear().toString();
-    const completedYearDocs = processedHistory.filter(
-      (d) => d.year < currentYearStr
-    );
+    // 2. 歷年季節常態模型大腦 (💡 升級：滾動式基準 Rolling Baseline)
+    const currentDateObj = new Date();
+    const currentYearNum = currentDateObj.getFullYear();
+    const currentMonthNum = currentDateObj.getMonth() + 1; // 1-12
+
+    const rollingCompletedDocs = processedHistory.filter((d) => {
+      const dYear = Number(d.year);
+      const dMonth = Number(d.month);
+      // 納入過往所有年份，且納入今年「小於目前月份」的已完結月份
+      return (
+        dYear < currentYearNum ||
+        (dYear === currentYearNum && dMonth < currentMonthNum)
+      );
+    });
+
+    const targetBranches = isAgg ? BRANCHES : [stratBranch];
 
     const seasonalityBaseline = MONTHS.map((m) => {
-      const targetMonthDocs = completedYearDocs.filter(
+      const targetMonthDocs = rollingCompletedDocs.filter(
         (d) =>
           d.month === m &&
           (isAgg ? BRANCHES.includes(d.branch) : d.branch === stratBranch)
       );
-      const targetGroupDocs = completedYearDocs.filter(
+      const targetGroupDocs = rollingCompletedDocs.filter(
         (d) => d.month === m && d.branch === "全院總計"
       );
 
@@ -630,6 +725,25 @@ export default function App() {
       );
       const avgASP = sumSur > 0 ? Math.round(sumRev / sumSur) : 0;
 
+      // 評論新增的滾動基準平均
+      let sumReviewNew = 0;
+      let countReviewNew = 0;
+      YEARS.forEach((y) => {
+        if (
+          Number(y) < currentYearNum ||
+          (Number(y) === currentYearNum && Number(m) < currentMonthNum)
+        ) {
+          const ym = `${y}-${m}`;
+          const rData = getRevData(ym, targetBranches);
+          if (rData.newRev !== null) {
+            sumReviewNew += rData.newRev;
+            countReviewNew++;
+          }
+        }
+      });
+      const avgReviewNew =
+        countReviewNew > 0 ? Math.round(sumReviewNew / countReviewNew) : 0;
+
       return {
         name: `${m}月`,
         avgConsultation: Math.round(avgConsultation),
@@ -638,6 +752,7 @@ export default function App() {
         avgSuccess: avgSuccess,
         avgASP: avgASP,
         avgRevenue: Math.round(avgRevenue),
+        avgReviewNew: avgReviewNew,
       };
     });
 
@@ -685,8 +800,18 @@ export default function App() {
         };
       };
 
-      const curData = aggregateDocs(curBranchDocs, curGroupDocs);
-      const prevData = aggregateDocs(prevBranchDocs, prevGroupDocs);
+      const curData = aggregateDocs(curBranchDocs, curGroupDocs) || {};
+      const prevData = aggregateDocs(prevBranchDocs, prevGroupDocs) || {};
+
+      const curYm = `${stratBaseYear}-${m}`;
+      const prevYm = `${prevYear}-${m}`;
+      const curRevData = getRevData(curYm, targetBranches);
+      const prevRevData = getRevData(prevYm, targetBranches);
+
+      curData.reviewTotal = curRevData.total;
+      curData.reviewNew = curRevData.newRev;
+      prevData.reviewTotal = prevRevData.total;
+      prevData.reviewNew = prevRevData.newRev;
 
       const getVal = (obj, key) => {
         if (!obj) return null;
@@ -696,6 +821,8 @@ export default function App() {
         if (key === "conversion") return obj.conv;
         if (key === "success") return obj.succ;
         if (key === "asp") return obj.asp;
+        if (key === "reviewTotal") return obj.reviewTotal;
+        if (key === "reviewNew") return obj.reviewNew;
         return null;
       };
 
@@ -704,7 +831,8 @@ export default function App() {
 
       const baseline = seasonalityBaseline.find((b) => b.name === `${m}月`);
       let histAvg = null;
-      if (baseline) {
+      if (baseline && stratMetric !== "reviewTotal") {
+        // 評論總數隱藏均線
         if (stratMetric === "revenue") histAvg = baseline.avgRevenue;
         else if (stratMetric === "consultation")
           histAvg = baseline.avgConsultation;
@@ -712,6 +840,7 @@ export default function App() {
         else if (stratMetric === "conversion") histAvg = baseline.avgConversion;
         else if (stratMetric === "success") histAvg = baseline.avgSuccess;
         else if (stratMetric === "asp") histAvg = baseline.avgASP;
+        else if (stratMetric === "reviewNew") histAvg = baseline.avgReviewNew;
       }
 
       return {
@@ -720,13 +849,20 @@ export default function App() {
         prevVal: pV,
         historyAvg: histAvg,
         yoy: calcYoY(cV, pV),
-        curData: curData || {},
-        prevData: prevData || {},
+        curData: curData,
+        prevData: prevData,
       };
     });
 
     return { yearlyTrend, monthlyYoY, processedHistory, seasonalityBaseline };
-  }, [historyData, stratFilterMode, stratBranch, stratBaseYear, stratMetric]);
+  }, [
+    historyData,
+    dbData,
+    stratFilterMode,
+    stratBranch,
+    stratBaseYear,
+    stratMetric,
+  ]);
 
   // --- 6. 事件處理 ---
   const handleFetchReviews = async () => {
@@ -786,11 +922,11 @@ export default function App() {
         ...formData,
         month: formData.date.slice(0, 7),
         day: parseInt(formData.date.split("-")[2], 10),
-        currentC: parseInt(formData.currentC),
-        currentS: parseInt(formData.currentS),
-        nextC: parseInt(formData.nextC),
-        nextS: parseInt(formData.nextS),
-        reviews: parseInt(formData.reviews || 0),
+        currentC: parseInt(formData.currentC) || null,
+        currentS: parseInt(formData.currentS) || null,
+        nextC: parseInt(formData.nextC) || null,
+        nextS: parseInt(formData.nextS) || null,
+        reviews: parseInt(formData.reviews) || null,
         timestamp: Date.now(),
       });
       setUiStatus({ loading: false, msg: "儲存成功", type: "success" });
@@ -1543,6 +1679,16 @@ export default function App() {
                   >
                     視角 B: 諮詢品質
                   </button>
+                  <button
+                    onClick={() => setStratView("macro_C")}
+                    className={`px-5 py-2.5 rounded-xl transition-all ${
+                      stratView === "macro_C"
+                        ? "bg-white text-blue-700 shadow-md"
+                        : "text-white opacity-60"
+                    }`}
+                  >
+                    視角 C: 口碑聲量
+                  </button>
                 </div>
               </div>
               <div className="h-96">
@@ -1565,13 +1711,19 @@ export default function App() {
                       tickLine={false}
                       tick={{ fontSize: 11, fontWeight: 700, fill: "#94a3b8" }}
                     />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fontSize: 11, fontWeight: 700, fill: "#94a3b8" }}
-                    />
+                    {stratView === "macro_A" && (
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          fill: "#94a3b8",
+                        }}
+                      />
+                    )}
                     <Tooltip
                       contentStyle={{
                         borderRadius: "20px",
@@ -1580,7 +1732,7 @@ export default function App() {
                       }}
                     />
                     <Legend verticalAlign="top" height={36} iconType="circle" />
-                    {stratView === "macro_A" ? (
+                    {stratView === "macro_A" && (
                       <>
                         <Bar
                           yAxisId="right"
@@ -1609,7 +1761,8 @@ export default function App() {
                           dot={{ r: 5, fill: "#16a34a" }}
                         />
                       </>
-                    ) : (
+                    )}
+                    {stratView === "macro_B" && (
                       <>
                         <Line
                           yAxisId="left"
@@ -1631,6 +1784,20 @@ export default function App() {
                         />
                       </>
                     )}
+                    {stratView === "macro_C" && (
+                      <>
+                        <Line
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="reviewTotal"
+                          name="年度累積評論總數"
+                          stroke="#f59e0b"
+                          strokeWidth={4}
+                          dot={{ r: 5, fill: "#f59e0b" }}
+                          connectNulls={false}
+                        />
+                      </>
+                    )}
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
@@ -1641,7 +1808,7 @@ export default function App() {
                   <thead className="bg-slate-50 text-slate-400 font-black uppercase">
                     <tr>
                       <th className="p-4">年度指標</th>
-                      {stratView === "macro_A" ? (
+                      {stratView === "macro_A" && (
                         <>
                           <th className="p-4">總諮詢量</th>
                           <th className="p-4">YoY</th>
@@ -1652,12 +1819,19 @@ export default function App() {
                           <th className="p-4">歷年平均 ASP</th>
                           <th className="p-4">YoY</th>
                         </>
-                      ) : (
+                      )}
+                      {stratView === "macro_B" && (
                         <>
                           <th className="p-4">歷年平均轉換率</th>
                           <th className="p-4">YoY</th>
                           <th className="p-4">歷年平均諮詢成功率</th>
                           <th className="p-4">YoY</th>
+                        </>
+                      )}
+                      {stratView === "macro_C" && (
+                        <>
+                          <th className="p-4">年度總評論數 (年底)</th>
+                          <th className="p-4">YoY 成長率</th>
                         </>
                       )}
                     </tr>
@@ -1673,7 +1847,7 @@ export default function App() {
                           <td className="p-4 text-slate-900 font-black text-sm">
                             {y.name}
                           </td>
-                          {stratView === "macro_A" ? (
+                          {stratView === "macro_A" && (
                             <>
                               <td className="p-4 text-blue-600">
                                 {y.consultation === 0 &&
@@ -1750,7 +1924,8 @@ export default function App() {
                                 {y.yoyAsp}
                               </td>
                             </>
-                          ) : (
+                          )}
+                          {stratView === "macro_B" && (
                             <>
                               <td className="p-4 text-purple-600">
                                 {y.conv === 0 &&
@@ -1792,6 +1967,26 @@ export default function App() {
                               </td>
                             </>
                           )}
+                          {stratView === "macro_C" && (
+                            <>
+                              <td className="p-4 text-amber-600">
+                                {y.reviewTotal === null
+                                  ? "--"
+                                  : y.reviewTotal.toLocaleString()}
+                              </td>
+                              <td
+                                className={`p-4 ${
+                                  y.yoyReviewTotal.includes("-")
+                                    ? "text-red-500"
+                                    : y.yoyReviewTotal !== "--"
+                                    ? "text-green-600"
+                                    : "text-slate-400"
+                                }`}
+                              >
+                                {y.yoyReviewTotal}
+                              </td>
+                            </>
+                          )}
                         </tr>
                       ))}
                   </tbody>
@@ -1824,7 +2019,7 @@ export default function App() {
                       </option>
                     ))}
                   </select>
-                  <div className="bg-slate-100 p-1.5 rounded-2xl flex gap-1 text-[10px] font-black uppercase">
+                  <div className="bg-slate-100 p-1.5 rounded-2xl flex flex-wrap gap-1 text-[10px] font-black uppercase max-w-xl">
                     {[
                       { id: "revenue", label: "營收", icon: DollarSign },
                       { id: "consultation", label: "諮詢", icon: Activity },
@@ -1832,6 +2027,8 @@ export default function App() {
                       { id: "conversion", label: "轉換%", icon: Percent },
                       { id: "success", label: "成功%", icon: Star },
                       { id: "asp", label: "ASP", icon: DollarSign },
+                      { id: "reviewTotal", label: "評論總數", icon: Star },
+                      { id: "reviewNew", label: "評論新增", icon: PlusCircle },
                     ].map((m) => (
                       <button
                         key={m.id}
@@ -1921,32 +2118,38 @@ export default function App() {
                       strokeDasharray="5 5"
                       dot={{ r: 4, fill: "#cbd5e1" }}
                     />
-                    <Line
-                      type="monotone"
-                      dataKey="historyAvg"
-                      connectNulls={false}
-                      name="歷年常態平均"
-                      stroke="#10b981"
-                      strokeWidth={3}
-                      strokeDasharray="3 3"
-                      dot={{ r: 4, fill: "#10b981" }}
-                    />
+                    {stratMetric !== "reviewTotal" && (
+                      <Line
+                        type="monotone"
+                        dataKey="historyAvg"
+                        connectNulls={false}
+                        name="歷年常態平均"
+                        stroke="#10b981"
+                        strokeWidth={3}
+                        strokeDasharray="3 3"
+                        dot={{ r: 4, fill: "#10b981" }}
+                      />
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
 
               {/* 表格 A: 月度 YoY 明細 */}
-              <div className="mt-12 overflow-hidden rounded-3xl border border-slate-100 shadow-sm">
-                <table className="w-full text-left text-[11px]">
+              <div className="mt-12 overflow-x-auto rounded-3xl border border-slate-100 shadow-sm">
+                <table className="w-full text-left text-[11px] whitespace-nowrap">
                   <thead className="bg-slate-900 text-white font-black uppercase">
                     <tr>
                       <th className="p-4">月度對比指標</th>
-                      <th className="p-4">當期實績</th>
-                      <th className="p-4">前期對比</th>
-                      <th className="p-4">YoY 成長率</th>
+                      <th className="p-4 text-purple-300">當期實績</th>
+                      <th className="p-4 text-purple-300">前期對比</th>
+                      <th className="p-4 text-purple-300">YoY 成長率</th>
                       <th className="p-4">轉換率</th>
                       <th className="p-4">YoY</th>
-                      <th className="p-4">諮詢成功率</th>
+                      <th className="p-4">成功率</th>
+                      <th className="p-4">YoY</th>
+                      <th className="p-4">評論總數</th>
+                      <th className="p-4">YoY</th>
+                      <th className="p-4">評論新增</th>
                       <th className="p-4">YoY</th>
                     </tr>
                   </thead>
@@ -2034,6 +2237,55 @@ export default function App() {
                         >
                           {calcYoY(m.curData.succ, m.prevData.succ)}
                         </td>
+                        <td className="p-4 text-amber-600">
+                          {m.curData.reviewTotal !== undefined &&
+                          m.curData.reviewTotal !== null
+                            ? m.curData.reviewTotal.toLocaleString()
+                            : "--"}
+                        </td>
+                        <td
+                          className={`p-4 ${
+                            calcYoY(
+                              m.curData.reviewTotal,
+                              m.prevData.reviewTotal
+                            ).includes("-")
+                              ? "text-red-500"
+                              : calcYoY(
+                                  m.curData.reviewTotal,
+                                  m.prevData.reviewTotal
+                                ) !== "--"
+                              ? "text-green-600"
+                              : "text-slate-400"
+                          }`}
+                        >
+                          {calcYoY(
+                            m.curData.reviewTotal,
+                            m.prevData.reviewTotal
+                          )}
+                        </td>
+                        <td className="p-4 text-orange-600">
+                          {m.curData.reviewNew !== undefined &&
+                          m.curData.reviewNew !== null
+                            ? m.curData.reviewNew.toLocaleString()
+                            : "--"}
+                        </td>
+                        <td
+                          className={`p-4 ${
+                            calcYoY(
+                              m.curData.reviewNew,
+                              m.prevData.reviewNew
+                            ).includes("-")
+                              ? "text-red-500"
+                              : calcYoY(
+                                  m.curData.reviewNew,
+                                  m.prevData.reviewNew
+                                ) !== "--"
+                              ? "text-green-600"
+                              : "text-slate-400"
+                          }`}
+                        >
+                          {calcYoY(m.curData.reviewNew, m.prevData.reviewNew)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -2046,10 +2298,10 @@ export default function App() {
               <div className="bg-slate-900 text-white p-6 rounded-3xl flex justify-between items-center shadow-lg">
                 <div>
                   <h4 className="text-base font-black tracking-wide">
-                    📊 ✨ 歷年動態季節性常態基線 (Seasonality Baseline Matrix)
+                    📊 ✨ 歷年動態季節性常態基線 (Rolling Seasonality Baseline)
                   </h4>
                   <p className="text-[11px] text-slate-400 mt-1 font-semibold">
-                    系統已自動鎖定已完結年度，即時剔除未完結之本年度數據干擾
+                    系統採用【滾動式常態基準】：納入歷年數據，並自動加進今年「已經完整過完的月份」。
                   </p>
                 </div>
               </div>
@@ -2075,7 +2327,7 @@ export default function App() {
                     <p className="flex items-center gap-1 text-blue-900 font-black mb-1">
                       <Info className="w-3.5 h-3.5" /> 流量視角戰略意涵：
                     </p>
-                    此圖表統計過去所有完結年份各月份的總平均。可用於觀測品牌的「市場季節性常規週期」（例如寒暑假是否具備顯著高峰）。管理層可依此常態曲線，在淡季前提早一個月調整行銷廣告投放預算，或在旺季來臨前完成耗材與產能盤點。
+                    此圖表統計集團歷年（包含今年已完結之月份）各月份的總平均。系統採用滾動式基準，當前未完結之月份會自動排除以防失真。可用於觀測品牌的「市場季節性常規週期」，在淡季前提早一個月調整行銷廣告投放預算。
                   </div>
                 )}
 
@@ -2152,7 +2404,7 @@ export default function App() {
                     <p className="flex items-center gap-1 text-purple-900 font-black mb-1">
                       <Info className="w-3.5 h-3.5" /> 品質視角戰略意涵：
                     </p>
-                    用於檢視現場前線團隊的「收單難易度」與「名單含金量」季節週期。若某月份流量極大但轉換率通常處於低谷，代表該月份存在大量無效比價名單，團隊應適度優化前端篩選機制；反之，若某月份來客少但轉換成功率高，代表為精準剛需客群，應全力加強現場高階耗材與方案的推動。
+                    用於檢視現場前線團隊的「收單難易度」季節週期。同樣採用滾動式基準，若某月份流量極大但轉換率通常處於低谷，代表該月份存在大量無效比價名單，團隊應適度優化前端篩選機制。
                   </div>
                 )}
 
@@ -2229,7 +2481,7 @@ export default function App() {
                     <p className="flex items-center gap-1 text-amber-900 font-black mb-1">
                       <Info className="w-3.5 h-3.5" /> 財務視角戰略意涵：
                     </p>
-                    客單價（ASP）是驅動營收擴張的關鍵财务引擎。此常態圖用來抓出高階自費手術（如頂級客製化屈光雷射）在一年之中的銷售蜜月期。管理層可藉此評估自費手術分期付款活動、高端產品促銷的最佳切入月份，實現智慧型的產值推升。
+                    客單價（ASP）是驅動營收擴張的關鍵財務引擎。此常態圖（套用滾動式基準）用來抓出高階自費手術在一年之中的銷售蜜月期。管理層可藉此評估自費手術分期付款活動、高端產品促銷的最佳切入月份。
                   </div>
                 )}
 
@@ -2297,7 +2549,7 @@ export default function App() {
                     <p className="flex items-center gap-1 text-green-900 font-black mb-1">
                       <Info className="w-3.5 h-3.5" /> 營收視角戰略意涵：
                     </p>
-                    此圖表統計過去所有完結年份各月份的平均總營收。可用於觀測集團或分院在全年度的「現金流與產值水位」真實波動，協助財務端進行資金調度規劃與次年度之營收預算編列參考。
+                    統計歷年（含今年已完結之月份）各月份的平均總營收。可用於觀測集團或分院在全年度的「現金流與產值水位」真實波動，協助財務端進行資金調度規劃與次年度之營收預算編列參考。
                   </div>
                 )}
 
@@ -2348,6 +2600,77 @@ export default function App() {
                         dot={{ r: 4 }}
                       />
                     </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* 💡 3-E. 新增口碑視角淡旺季 */}
+              <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 relative">
+                <div className="flex justify-between items-center mb-6">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-black text-slate-800">
+                      【口碑視角】歷年每月平均 Google 評論新增常態
+                    </h3>
+                    <button
+                      onClick={() => setShowInfoReviewNew(!showInfoReviewNew)}
+                      className="text-slate-400 hover:text-orange-600 transition-colors"
+                    >
+                      <HelpCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {showInfoReviewNew && (
+                  <div className="mb-6 p-4 bg-orange-50/80 border border-orange-100 rounded-2xl text-xs text-orange-800 font-bold leading-relaxed animate-in fade-in duration-300">
+                    <p className="flex items-center gap-1 text-orange-900 font-black mb-1">
+                      <Info className="w-3.5 h-3.5" /> 口碑視角戰略意涵：
+                    </p>
+                    由於 Google
+                    評論為近期導入系統之指標，此圖表採用滾動式基準，將即時吸納「今年
+                    1
+                    月至今已完結月份」的歷史數據，為您動態勾勒出集團口碑資產的季節性增長能量，讓行銷公關活動的效果視覺化。
+                  </div>
+                )}
+
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={strategyData.seasonalityBaseline}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="#f1f5f9"
+                      />
+                      <XAxis
+                        dataKey="name"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{
+                          fontSize: 11,
+                          fontWeight: 800,
+                          fill: "#94a3b8",
+                        }}
+                      />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          fill: "#94a3b8",
+                        }}
+                      />
+                      <Tooltip />
+                      <Legend
+                        wrapperStyle={{ fontSize: "11px", fontWeight: 800 }}
+                      />
+                      <Bar
+                        dataKey="avgReviewNew"
+                        name="歷年平均評論新增 (則)"
+                        fill="#f97316"
+                        radius={[8, 8, 0, 0]}
+                        barSize={35}
+                      />
+                    </BarChart>
                   </ResponsiveContainer>
                 </div>
               </div>
